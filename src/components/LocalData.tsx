@@ -24,7 +24,11 @@ export function LocalDataPanel() {
     if (!window.confirm('Alle Daten in diesem Browser werden durch die Sicherung ersetzt. Fortfahren?')) return;
     const result = await run(async () => (await import('../local/backend')).importBackup(file));
     if (result) {
-      window.alert(`Sicherung geladen: ${result.projects} Projekte.`);
+      window.alert(
+        result.projects
+          ? `Sicherung geladen: ${result.projects} Projekte.`
+          : 'Die Datei enthält keine Projekte. Bei einer Datenbank der Server-Version bitte den Server vor dem Kopieren beenden.',
+      );
       window.location.hash = '#/';
       window.location.reload();
     }

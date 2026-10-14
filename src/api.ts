@@ -6,7 +6,11 @@ import type {
   DocType,
   DocumentFull,
   NewRequirementInput,
+  OfferTerms,
   Person,
+  PriceEntry,
+  PricePosition,
+  PriceState,
   ProjectDetail,
   ProjectSummary,
   Rating,
@@ -68,6 +72,7 @@ export interface DocumentFields {
   amount?: number | null;
   currency?: string;
   content?: string;
+  terms?: Partial<Record<keyof OfferTerms, unknown>>;
 }
 
 export const api = {
@@ -86,7 +91,8 @@ export const api = {
     get: (id: number) => request<ProjectDetail>('GET', `/projects/${id}`),
     create: (input: { name: string; description?: string; defaultCriteria?: boolean }) =>
       request<ProjectDetail>('POST', '/projects', input),
-    update: (id: number, patch: { name?: string; description?: string }) => request<ProjectDetail>('PATCH', `/projects/${id}`, patch),
+    update: (id: number, patch: { name?: string; description?: string; recommendation?: string; recommendedDocumentId?: number | null }) =>
+      request<ProjectDetail>('PATCH', `/projects/${id}`, patch),
     remove: (id: number) => request<void>('DELETE', `/projects/${id}`),
   },
 
@@ -110,6 +116,22 @@ export const api = {
       request<Criterion>('POST', `/projects/${projectId}/criteria`, input),
     update: (id: number, patch: Partial<Omit<Criterion, 'id' | 'projectId'>>) => request<Criterion>('PATCH', `/criteria/${id}`, patch),
     remove: (id: number) => request<void>('DELETE', `/criteria/${id}`),
+  },
+
+  comparisons: {
+    list: () => request<ProjectDetail[]>('GET', '/comparisons'),
+  },
+
+  positions: {
+    create: (
+      projectId: number,
+      items: Array<{ ref?: string; name: string; quantity?: number | null; unit?: string; prices?: Array<{ documentId: number; price: number | null; state?: PriceState }> }>,
+    ) => request<PricePosition[]>('POST', `/projects/${projectId}/positions`, { items }),
+    update: (id: number, patch: Partial<Pick<PricePosition, 'ref' | 'name' | 'quantity' | 'unit' | 'position'>>) =>
+      request<PricePosition>('PATCH', `/positions/${id}`, patch),
+    remove: (id: number) => request<void>('DELETE', `/positions/${id}`),
+    setPrice: (input: { positionId: number; documentId: number; price: number | null; state: PriceState; note?: string }) =>
+      request<PriceEntry>('PUT', '/price-entries', input),
   },
 
   scores: {

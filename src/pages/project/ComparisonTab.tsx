@@ -1,128 +1,337 @@
-import { Ban, Trophy } from 'lucide-react';
-import { useMemo } from 'react';
+import { Ban, Medal, Printer, Save, ThumbsDown, ThumbsUp, Trophy } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { computeScores, requirementScore } from '../../../shared/scoring';
-import { DOC_TYPE_LABELS, STATUS_META, type ProjectDetail, type ReqStatus } from '../../../shared/types';
+import { requirementScore } from '../../../shared/scoring';
+import { DOC_TYPE_LABELS, STATUS_META, type DocumentMeta, type ProjectDetail, type ReqStatus } from '../../../shared/types';
 import { MAX_SERIES, seriesVar, TooltipRow, useChartTooltip } from '../../components/charts';
+import { MackWordmark } from '../../components/Logo';
+import { ScopeToggle } from '../../components/ScopeToggle';
 import { StatusBar } from '../../components/status';
-import { DocTypeBadge, EmptyState } from '../../components/ui';
+import { EmptyState } from '../../components/ui';
+import { analyzeProject, contributions, strengthsAndWeaknesses, useScope, type Analysis } from '../../comparison';
+import { api } from '../../api';
 import { formatDate, formatMoney, formatNumber, formatPercent } from '../../format';
+import { useAction, useUsers } from '../../state';
 
-export function ComparisonTab({ project }: { project: ProjectDetail }) {
-  const docs = project.documents;
-  const results = useMemo(() => computeScores(project.criteria, docs, project.scores), [project.criteria, docs, project.scores]);
-  const byDoc = new Map(results.map((r) => [r.documentId, r]));
+type SetProject = (updater: (p: ProjectDetail) => ProjectDetail) => void;
 
-  if (docs.length === 0) {
+export function ComparisonTab({ project, setProject }: { project: ProjectDetail; setProject: SetProject }) {
+  const [includeAll, setIncludeAll] = useScope();
+  const analysis = useMemo(() => analyzeProject(project, includeAll), [project, includeAll]);
+
+  if (analysis.docs.length === 0) {
     return (
       <div className="card">
-        <EmptyState title="Noch nichts zu vergleichen" text="Füge mindestens ein Dokument hinzu und bewerte es anhand der Kriterien." />
+        <EmptyState title="Noch nichts zu vergleichen" text="Füge Angebote hinzu und bewerte sie anhand der Kriterien." />
       </div>
     );
   }
 
   return (
     <section className="stack">
-      <RankingChart project={project} results={results} />
-      <CriteriaChart project={project} perCriterion={(docId, cId) => byDoc.get(docId)?.perCriterion[cId] ?? null} />
-      <RequirementsCard project={project} />
-      <FactsTable project={project} results={results} />
+      <div className="toolbar wrap no-print">
+        <p className="muted">Ergebnis der gewichteten Bewertung (Nutzwertanalyse) mit Vergabeempfehlung.</p>
+        <div className="toolbar-spacer" />
+        {analysis.canToggleScope && <ScopeToggle includeAll={includeAll} onChange={setIncludeAll} />}
+        <button className="btn" onClick={() => window.print()}>
+          <Printer size={16} /> Vergabevorschlag drucken
+        </button>
+      </div>
+
+      <PrintHeader project={project} />
+      <Podium project={project} analysis={analysis} />
+      <Recommendation project={project} analysis={analysis} setProject={setProject} />
+      <ContributionChart project={project} analysis={analysis} />
+      <CriteriaChart project={project} analysis={analysis} />
+      <RequirementsCard analysis={analysis} />
     </section>
   );
 }
 
-type Results = ReturnType<typeof computeScores>;
+function PrintHeader({ project }: { project: ProjectDetail }) {
+  return (
+    <div className="print-only print-header">
+      <MackWordmark className="print-wordmark" />
+      <div>
+        <h1>Vergabevorschlag: {project.name}</h1>
+        <p>Stand {formatDate(new Date().toISOString())}</p>
+      </div>
+    </div>
+  );
+}
 
-function RankingChart({ project, results }: { project: ProjectDetail; results: Results }) {
-  const { containerRef, bind, tooltip } = useChartTooltip();
-  const sorted = [...results].sort((a, b) => {
-    if (a.rank === null) return 1;
-    if (b.rank === null) return -1;
-    return a.rank - b.rank;
-  });
+// ------------------------------------------------------------------ Siegerpodest
+
+function Podium({ project, analysis }: { project: ProjectDetail; analysis: Analysis }) {
+  const ranked = analysis.results
+    .filter((r) => r.rank !== null && !r.knockedOut)
+    .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99))
+    .slice(0, 3);
+  const excluded = analysis.results.filter((r) => r.knockedOut);
+  const unrated = analysis.results.filter((r) => r.rank === null);
+  const order = [ranked[1], ranked[0], ranked[2]].filter(Boolean);
+  const docOf = (id: number) => project.documents.find((d) => d.id === id)!;
+
+  if (ranked.length === 0) {
+    return (
+      <div className="card">
+        <EmptyState
+          icon={<Trophy size={36} />}
+          title="Noch kein Ergebnis"
+          text={
+            <>
+              Erfasse Konditionen im <Link to={`/projects/${project.id}?tab=offers`}>Angebotsvergleich</Link> und bewerte die Kriterien unter{' '}
+              <Link to={`/projects/${project.id}?tab=scoring`}>Bewertung</Link>.
+            </>
+          }
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="card chart-card">
-      <div className="card-header">
-        <h2>Gesamtbewertung (gewichtet)</h2>
-        <Link className="link-sm" to={`/projects/${project.id}?tab=scoring`}>
-          Bewertung bearbeiten
-        </Link>
-      </div>
-      <div className="bar-chart" ref={containerRef}>
-        <div className="bar-axis">
-          {[0, 25, 50, 75, 100].map((t) => (
-            <span key={t} style={{ left: `${t}%` }}>
-              {t} %
-            </span>
-          ))}
-        </div>
-        {sorted.map((r) => {
-          const doc = project.documents.find((d) => d.id === r.documentId)!;
-          const pct = r.percent ?? 0;
+    <div className="card podium-card">
+      <div className="podium">
+        {order.map((r) => {
+          const doc = docOf(r.documentId);
+          const { strengths, weaknesses } = strengthsAndWeaknesses(project.criteria, analysis, doc.id);
           return (
-            <div key={r.documentId} className="bar-row">
-              <div className="bar-label">
-                <span className="bar-rank">{r.rank ?? '–'}</span>
-                <span className="bar-label-text">
-                  <strong>{doc.title}</strong>
-                  <small>{doc.counterparty || DOC_TYPE_LABELS[doc.docType]}</small>
+            <div key={r.documentId} className={`podium-place place-${r.rank}`}>
+              <div className="podium-info">
+                <span className="podium-medal" aria-label={`Platz ${r.rank}`}>
+                  {r.rank === 1 ? <Trophy size={22} /> : <Medal size={20} />}
                 </span>
-              </div>
-              <div className="bar-track">
-                {[25, 50, 75].map((t) => (
-                  <span key={t} className="bar-grid" style={{ left: `${t}%` }} />
-                ))}
-                {r.percent !== null && (
-                  <div
-                    className={`bar ${r.knockedOut ? 'bar-muted' : ''}`}
-                    style={{ width: `${Math.max(pct, 0.5)}%` }}
-                    aria-label={`${doc.title}: ${formatPercent(pct)}`}
-                    {...bind(
-                      <>
-                        <TooltipRow value={formatPercent(pct, 1)} label={doc.title} />
-                        <div className="tt-sub">
-                          {formatNumber(r.total, 2)} von 10 Punkten · {r.ratedCount}/{r.activeCount} Kriterien bewertet
-                        </div>
-                        {r.knockedOut && <div className="tt-sub">Ausschluss: {r.knockoutReasons.join('; ')}</div>}
-                      </>,
-                    )}
-                  />
+                <Link to={`/documents/${doc.id}`} className="podium-title">
+                  {doc.title}
+                </Link>
+                <span className="podium-sub">{doc.counterparty || DOC_TYPE_LABELS[doc.docType]}</span>
+                <span className="podium-score">{formatPercent(r.percent)}</span>
+                <span className="podium-meta">
+                  {formatMoney(analysis.prices.get(doc.id) ?? null, doc.currency)}
+                  {r.coverage < 0.999 && ` · vorläufig (${formatPercent(r.coverage * 100)} bewertet)`}
+                </span>
+                {(strengths.length > 0 || weaknesses.length > 0) && (
+                  <div className="podium-sw">
+                    {strengths.map((c) => (
+                      <span key={c.id} className="sw sw-plus" title="Bester Wert aller Angebote">
+                        <ThumbsUp size={12} /> {c.name}
+                      </span>
+                    ))}
+                    {weaknesses.map((c) => (
+                      <span key={c.id} className="sw sw-minus" title="Schwächster Wert aller Angebote">
+                        <ThumbsDown size={12} /> {c.name}
+                      </span>
+                    ))}
+                  </div>
                 )}
-                <span className="bar-value" style={{ left: `${Math.min(pct, 100)}%` }}>
-                  {r.percent === null ? 'nicht bewertet' : formatPercent(pct)}
-                  {r.rank === 1 && !r.knockedOut && (
-                    <span className="chip chip-good">
-                      <Trophy size={12} /> Favorit
-                    </span>
-                  )}
-                  {r.knockedOut && (
-                    <span className="chip chip-bad">
-                      <Ban size={12} /> Ausschluss
-                    </span>
-                  )}
-                  {r.percent !== null && r.coverage < 0.999 && <span className="muted small">vorläufig · {formatPercent(r.coverage * 100)} bewertet</span>}
-                </span>
+              </div>
+              <div className="podium-step">
+                <span>{r.rank}</span>
               </div>
             </div>
           );
         })}
+      </div>
+      {(excluded.length > 0 || unrated.length > 0) && (
+        <div className="podium-foot">
+          {excluded.map((r) => (
+            <span key={r.documentId} className="chip chip-bad" title={r.knockoutReasons.join('\n')}>
+              <Ban size={12} /> {docOf(r.documentId).title}: ausgeschlossen ({r.knockoutReasons.join('; ')})
+            </span>
+          ))}
+          {unrated.map((r) => (
+            <span key={r.documentId} className="chip">
+              {docOf(r.documentId).title}: noch nicht bewertet
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Empfehlung
+
+function Recommendation({ project, analysis, setProject }: { project: ProjectDetail; analysis: Analysis; setProject: SetProject }) {
+  const run = useAction();
+  const { currentUser } = useUsers();
+  const leader = analysis.results.find((r) => r.rank === 1 && !r.knockedOut);
+  const [docId, setDocId] = useState<number | ''>(project.recommendedDocumentId ?? leader?.documentId ?? '');
+  const [text, setText] = useState(project.recommendation);
+  useEffect(() => {
+    setDocId(project.recommendedDocumentId ?? leader?.documentId ?? '');
+    setText(project.recommendation);
+  }, [project.recommendedDocumentId, project.recommendation]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const saved = project.recommendedDocumentId !== null;
+  const dirty = docId !== (project.recommendedDocumentId ?? '') || text !== project.recommendation;
+  const chosen = analysis.docs.find((d) => d.id === docId) ?? project.documents.find((d) => d.id === docId);
+  const chosenResult = chosen ? analysis.byDoc.get(chosen.id) : undefined;
+
+  const suggestion = () => {
+    if (!chosen || !chosenResult) return '';
+    const { strengths } = strengthsAndWeaknesses(project.criteria, analysis, chosen.id);
+    const parts = [
+      `Empfohlen wird das Angebot „${chosen.title}“${chosen.counterparty ? ` von ${chosen.counterparty}` : ''}`,
+      `mit ${formatPercent(chosenResult.percent)} der erreichbaren Punkte (Rang ${chosenResult.rank ?? '–'})`,
+    ];
+    let s = `${parts.join(' ')}.`;
+    if (strengths.length) s += ` Stärken: ${strengths.map((c) => c.name).join(', ')}.`;
+    const price = analysis.prices.get(chosen.id);
+    if (price) s += ` Vergleichspreis: ${formatMoney(price, chosen.currency)} netto.`;
+    if (chosen.stats.declined) s += ` Offene Punkte: ${chosen.stats.declined} Anforderungen mit „Declined“ sind vor Vergabe zu klären.`;
+    return s;
+  };
+
+  const save = async () => {
+    const updated = await run(
+      () => api.projects.update(project.id, { recommendedDocumentId: docId === '' ? null : docId, recommendation: text }),
+      'Empfehlung gespeichert',
+    );
+    if (updated) setProject((p) => ({ ...p, recommendation: updated.recommendation, recommendedDocumentId: updated.recommendedDocumentId }));
+  };
+
+  return (
+    <div className="card recommendation">
+      <div className="card-header">
+        <h2>
+          <Trophy size={18} /> Vergabeempfehlung
+        </h2>
+        {saved ? <span className="chip chip-good">gespeichert</span> : <span className="chip">Entwurf</span>}
+      </div>
+      <div className="recommendation-body">
+        <label className="field">
+          <span className="field-label">Empfohlenes Angebot</span>
+          <select className="select" value={docId} onChange={(e) => setDocId(e.target.value ? Number(e.target.value) : '')}>
+            <option value="">– keine Empfehlung –</option>
+            {analysis.docs.map((d) => {
+              const r = analysis.byDoc.get(d.id);
+              return (
+                <option key={d.id} value={d.id}>
+                  {d.title}
+                  {r?.rank ? ` – Rang ${r.rank}, ${formatPercent(r.percent)}` : ''}
+                  {r?.knockedOut ? ' (ausgeschlossen)' : ''}
+                </option>
+              );
+            })}
+          </select>
+        </label>
+        {chosen && leader && chosen.id !== leader.documentId && (
+          <p className="hint-box">
+            <span>
+              Abweichung vom Bewertungsergebnis: Rang 1 ist „{project.documents.find((d) => d.id === leader.documentId)?.title}“. Bitte die Begründung
+              dokumentieren.
+            </span>
+          </p>
+        )}
+        <label className="field">
+          <span className="field-label">Begründung</span>
+          <textarea className="textarea" rows={4} value={text} onChange={(e) => setText(e.target.value)} placeholder="Warum fällt die Wahl auf dieses Angebot?" />
+        </label>
+        <div className="row gap-sm wrap no-print">
+          <button className="btn btn-sm" onClick={() => setText(suggestion())} disabled={!chosen}>
+            Begründung vorschlagen
+          </button>
+          <div className="toolbar-spacer" />
+          <button className="btn btn-primary" onClick={save} disabled={!dirty}>
+            <Save size={16} /> Empfehlung speichern
+          </button>
+        </div>
+        {currentUser && <p className="muted small print-only">Erstellt von {currentUser.name}</p>}
+      </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Punkteverteilung
+
+function ContributionChart({ project, analysis }: { project: ProjectDetail; analysis: Analysis }) {
+  const { containerRef, bind, tooltip } = useChartTooltip();
+  const criteria = project.criteria.filter((c) => c.weight > 0);
+  const shown = criteria.slice(0, MAX_SERIES - 1);
+  const rest = criteria.slice(MAX_SERIES - 1);
+  const rows = [...analysis.results]
+    .filter((r) => r.total !== null)
+    .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99))
+    .map((r) => {
+      const parts = contributions(project.criteria, r);
+      const segments = shown
+        .map((c, i) => ({ key: String(c.id), label: c.name, color: seriesVar(i), points: parts.find((p) => p.criterion.id === c.id)?.points ?? 0 }))
+        .filter((s) => s.points > 0);
+      const restPoints = parts.filter((p) => rest.some((c) => c.id === p.criterion.id)).reduce((s, p) => s + p.points, 0);
+      if (restPoints > 0) segments.push({ key: 'rest', label: 'Weitere Kriterien', color: 'var(--open)', points: restPoints });
+      return { r, doc: project.documents.find((d) => d.id === r.documentId)!, segments };
+    });
+  if (rows.length === 0) return null;
+
+  return (
+    <div className="card chart-card">
+      <div className="card-header">
+        <h2>Woraus sich die Punktzahl zusammensetzt</h2>
+        <span className="muted small">gewichtete Punkte je Kriterium, Summe = Gesamtwert (100 % = 10 Punkte)</span>
+      </div>
+      <div className="legend">
+        {shown.map((c, i) => (
+          <span key={c.id} className="legend-item">
+            <span className="legend-swatch" style={{ background: seriesVar(i) }} />
+            {c.name}
+          </span>
+        ))}
+        {rest.length > 0 && (
+          <span className="legend-item">
+            <span className="legend-swatch" style={{ background: 'var(--open)' }} />
+            Weitere Kriterien
+          </span>
+        )}
+      </div>
+      <div className="bar-chart" ref={containerRef}>
+        {rows.map(({ r, doc, segments }) => (
+          <div key={r.documentId} className="bar-row">
+            <div className="bar-label">
+              <span className="bar-rank">{r.knockedOut ? '–' : r.rank}</span>
+              <span className="bar-label-text">
+                <strong>{doc.title}</strong>
+                <small>{doc.counterparty || DOC_TYPE_LABELS[doc.docType]}</small>
+              </span>
+            </div>
+            <div className="bar-track">
+              <div className="stack-bar" style={{ width: `${((r.total ?? 0) / 10) * 100}%` }}>
+                {segments.map((s) => (
+                  <span
+                    key={s.key}
+                    className="stack-seg"
+                    style={{ flexGrow: s.points, background: s.color }}
+                    {...bind(
+                      <>
+                        <TooltipRow color={s.color} value={`${formatNumber(s.points * 10, 1)} %`} label={s.label} />
+                        <div className="tt-sub">{doc.title}</div>
+                      </>,
+                    )}
+                  />
+                ))}
+              </div>
+              <span className="bar-value" style={{ left: `${((r.total ?? 0) / 10) * 100}%` }}>
+                {formatPercent(r.percent)}
+              </span>
+            </div>
+          </div>
+        ))}
         {tooltip}
       </div>
     </div>
   );
 }
 
-function CriteriaChart({ project, perCriterion }: { project: ProjectDetail; perCriterion: (docId: number, cId: number) => number | null }) {
+// ------------------------------------------------------------------ Kriterienvergleich
+
+function CriteriaChart({ project, analysis }: { project: ProjectDetail; analysis: Analysis }) {
   const { containerRef, bind, tooltip } = useChartTooltip();
   const criteria = project.criteria.filter((c) => c.weight > 0);
-  // Farbe bleibt an die Position des Dokuments gebunden; unbewertete Dokumente werden ausgeblendet.
-  const rated = project.documents
-    .map((d, index) => ({ d, index }))
-    .filter(({ d }) => criteria.some((c) => perCriterion(d.id, c.id) !== null));
-  const docs = rated.slice(0, MAX_SERIES);
-  const hidden = project.documents.length - docs.length;
+  const docs = analysis.docs
+    .filter((d) => criteria.some((c) => (analysis.byDoc.get(d.id)?.perCriterion[c.id] ?? null) !== null))
+    .slice(0, MAX_SERIES);
   if (criteria.length === 0 || docs.length === 0) return null;
+  const color = (d: DocumentMeta) => seriesVar(analysis.colorIndex.get(d.id) ?? 0);
 
   return (
     <div className="card chart-card">
@@ -130,22 +339,17 @@ function CriteriaChart({ project, perCriterion }: { project: ProjectDetail; perC
         <h2>Kriterien im Vergleich</h2>
         <span className="muted small">Punkte 0–10 je Kriterium</span>
       </div>
-      <div className="legend" aria-label="Legende">
-        {docs.map(({ d, index }) => (
+      <div className="legend">
+        {docs.map((d) => (
           <span key={d.id} className="legend-item">
-            <span className="legend-swatch" style={{ background: seriesVar(index) }} />
+            <span className="legend-swatch" style={{ background: color(d) }} />
             {d.title}
           </span>
         ))}
       </div>
-      {hidden > 0 && (
-        <p className="muted small">
-          {hidden} {hidden === 1 ? 'Dokument ist' : 'Dokumente sind'} noch nicht bewertet oder nicht dargestellt; alle Werte stehen in der Bewertungstabelle.
-        </p>
-      )}
       <div className="group-chart" ref={containerRef}>
         {criteria.map((c) => {
-          const values = docs.map(({ d }) => perCriterion(d.id, c.id));
+          const values = docs.map((d) => analysis.byDoc.get(d.id)?.perCriterion[c.id] ?? null);
           const max = Math.max(...values.map((v) => v ?? -1));
           return (
             <div key={c.id} className="group-row">
@@ -154,7 +358,7 @@ function CriteriaChart({ project, perCriterion }: { project: ProjectDetail; perC
                 <small>Gewicht {c.weight}</small>
               </div>
               <div className="group-bars">
-                {docs.map(({ d, index }, i) => {
+                {docs.map((d, i) => {
                   const v = values[i];
                   return (
                     <div key={d.id} className="group-bar-row">
@@ -162,10 +366,10 @@ function CriteriaChart({ project, perCriterion }: { project: ProjectDetail; perC
                         {v !== null && (
                           <div
                             className="bar"
-                            style={{ width: `${Math.max((v / 10) * 100, 0.8)}%`, background: seriesVar(index) }}
+                            style={{ width: `${Math.max((v / 10) * 100, 0.8)}%`, background: color(d) }}
                             {...bind(
                               <>
-                                <TooltipRow color={seriesVar(index)} value={`${formatNumber(v, 1)} / 10`} label={d.title} />
+                                <TooltipRow color={color(d)} value={`${formatNumber(v, 1)} / 10`} label={d.title} />
                                 <div className="tt-sub">{c.name}</div>
                               </>,
                             )}
@@ -196,12 +400,12 @@ function CriteriaChart({ project, perCriterion }: { project: ProjectDetail; perC
   );
 }
 
-function RequirementsCard({ project }: { project: ProjectDetail }) {
+function RequirementsCard({ analysis }: { analysis: Analysis }) {
   const statuses: ReqStatus[] = ['accepted', 'accepted_with_comments', 'declined', 'open'];
   return (
     <div className="card">
       <div className="card-header">
-        <h2>Anforderungsprüfung je Dokument</h2>
+        <h2>Anforderungsprüfung je Angebot</h2>
       </div>
       <div className="table-scroll">
         <table className="table">
@@ -220,7 +424,7 @@ function RequirementsCard({ project }: { project: ProjectDetail }) {
             </tr>
           </thead>
           <tbody>
-            {project.documents.map((d) => {
+            {analysis.docs.map((d) => {
               const score = requirementScore(d.stats);
               return (
                 <tr key={d.id}>
@@ -250,65 +454,6 @@ function RequirementsCard({ project }: { project: ProjectDetail }) {
             <span className={`legend-swatch status-seg-${s}`} /> {STATUS_META[s].label} ({STATUS_META[s].hint})
           </span>
         ))}
-      </div>
-    </div>
-  );
-}
-
-function FactsTable({ project, results }: { project: ProjectDetail; results: Results }) {
-  const docs = project.documents;
-  const byDoc = new Map(results.map((r) => [r.documentId, r]));
-  const amounts = docs.map((d) => d.amount).filter((a): a is number => a !== null);
-  const minAmount = amounts.length > 1 ? Math.min(...amounts) : null;
-
-  const rows: Array<{ label: string; render: (d: (typeof docs)[number]) => React.ReactNode }> = [
-    { label: 'Typ', render: (d) => <DocTypeBadge type={d.docType} /> },
-    { label: 'Vertragspartner', render: (d) => d.counterparty || '–' },
-    { label: 'Referenz', render: (d) => d.reference || '–' },
-    { label: 'Datum', render: (d) => formatDate(d.docDate) },
-    {
-      label: 'Betrag (netto)',
-      render: (d) => (
-        <span className="num">
-          {formatMoney(d.amount, d.currency)}
-          {minAmount !== null && d.amount === minAmount && <span className="chip chip-good">günstigster</span>}
-        </span>
-      ),
-    },
-    { label: 'Anforderungen', render: (d) => d.stats.total },
-    { label: 'Davon Declined', render: (d) => (d.stats.declined ? <strong className="text-bad">{d.stats.declined}</strong> : 0) },
-    { label: 'Gesamtbewertung', render: (d) => formatPercent(byDoc.get(d.id)?.percent ?? null) },
-    { label: 'Rang', render: (d) => (byDoc.get(d.id)?.knockedOut ? 'Ausschluss' : (byDoc.get(d.id)?.rank ?? '–')) },
-  ];
-
-  return (
-    <div className="card">
-      <div className="card-header">
-        <h2>Eckdaten</h2>
-      </div>
-      <div className="table-scroll">
-        <table className="table facts">
-          <thead>
-            <tr>
-              <th />
-              {docs.map((d, i) => (
-                <th key={d.id}>
-                  <span className="legend-swatch" style={{ background: seriesVar(i) }} /> {d.title}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.label}>
-                <th>{row.label}</th>
-                {docs.map((d) => (
-                  <td key={d.id}>{row.render(d)}</td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
     </div>
   );

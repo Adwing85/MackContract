@@ -117,26 +117,91 @@ const MIGRATIONS: string[] = [
   );
   CREATE INDEX idx_comments_requirement ON comments(requirement_id);
   `,
+  // 2: Angebotsvergleich – Konditionen, Preisspiegel, Vergabeempfehlung, automatische Kriterien
+  `
+  ALTER TABLE documents ADD COLUMN terms TEXT NOT NULL DEFAULT '{}';
+  ALTER TABLE projects ADD COLUMN recommendation TEXT NOT NULL DEFAULT '';
+  ALTER TABLE projects ADD COLUMN recommended_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL;
+
+  CREATE TABLE criteria_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    weight REAL NOT NULL DEFAULT 5,
+    kind TEXT NOT NULL DEFAULT 'manual',
+    knockout INTEGER NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT INTO criteria_new (id, project_id, name, description, weight, kind, knockout, position)
+    SELECT id, project_id, name, description, weight, kind, knockout, position FROM criteria;
+  DROP TABLE criteria;
+  ALTER TABLE criteria_new RENAME TO criteria;
+  CREATE INDEX idx_criteria_project ON criteria(project_id);
+
+  CREATE TABLE price_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    ref TEXT NOT NULL DEFAULT '',
+    name TEXT NOT NULL,
+    quantity REAL,
+    unit TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX idx_price_positions_project ON price_positions(project_id, position);
+
+  CREATE TABLE price_entries (
+    position_id INTEGER NOT NULL REFERENCES price_positions(id) ON DELETE CASCADE,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    price REAL,
+    state TEXT NOT NULL DEFAULT 'priced' CHECK (state IN ('priced', 'included', 'not_offered')),
+    note TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (position_id, document_id)
+  );
+  `,
 ];
 
 /** Aktiviert Fremdschlüssel und bringt das Schema auf den neuesten Stand. */
 export function initDb<T extends DB>(db: T, options: { wal?: boolean } = {}): T {
-  db.exec('PRAGMA foreign_keys = ON;');
   if (options.wal) db.exec('PRAGMA journal_mode = WAL;');
   migrate(db);
+  db.exec('PRAGMA foreign_keys = ON;');
   return db;
 }
+
+export const SCHEMA_VERSION = MIGRATIONS.length;
 
 function migrate(db: DB): void {
   const row = db.prepare('PRAGMA user_version').get() as { user_version: number };
   let version = row.user_version;
-  while (version < MIGRATIONS.length) {
-    transaction(db, () => {
-      db.exec(MIGRATIONS[version]);
-      db.exec(`PRAGMA user_version = ${version + 1}`);
-    });
-    version++;
+  if (version > MIGRATIONS.length) throw new Error('Die Datenbank stammt aus einer neueren Programmversion');
+  if (version === MIGRATIONS.length) return;
+  // Tabellen werden teils neu aufgebaut – Fremdschlüssel währenddessen aus, danach prüfen.
+  db.exec('PRAGMA foreign_keys = OFF;');
+  try {
+    while (version < MIGRATIONS.length) {
+      transaction(db, () => {
+        db.exec(MIGRATIONS[version]);
+        const violations = db.prepare('PRAGMA foreign_key_check').all();
+        if (violations.length) throw new Error(`Fremdschlüsselfehler nach Migration ${version + 1}`);
+        db.exec(`PRAGMA user_version = ${version + 1}`);
+      });
+      version++;
+    }
+  } finally {
+    db.exec('PRAGMA foreign_keys = ON;');
   }
+}
+
+/** Nur für Tests: Schema bis zu einer bestimmten Version anlegen. */
+export function migrateTo(db: DB, target: number): void {
+  db.exec('PRAGMA foreign_keys = OFF;');
+  const row = db.prepare('PRAGMA user_version').get() as { user_version: number };
+  for (let v = row.user_version; v < target; v++) {
+    db.exec(MIGRATIONS[v]);
+    db.exec(`PRAGMA user_version = ${v + 1}`);
+  }
+  db.exec('PRAGMA foreign_keys = ON;');
 }
 
 let savepointCounter = 0;

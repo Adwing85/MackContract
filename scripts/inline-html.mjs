@@ -22,10 +22,11 @@ html = html.replace(/<script type="module" crossorigin src="([^"]+)"><\/script>/
   return `<script type="module">${js}</script>`;
 });
 html = html.replace(/<link rel="stylesheet" crossorigin href="([^"]+)">/g, (_m, href) => `<style>${read(href)}</style>`);
-html = html.replace(/<link rel="icon" type="image\/svg\+xml" href="([^"]+)" \/>/, (_m, href) => {
-  const svg = readFileSync(path.join(dist, href.replace(/^\.\/?|^\//, '')), 'utf8');
-  used.add(href.replace(/^\.\/?|^\//, ''));
-  return `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}" />`;
+html = html.replace(/<link rel="icon" type="(image\/[a-z+]+)" href="([^"]+)" \/>/, (_m, type, href) => {
+  const rel = href.replace(/^\.\/?|^\//, '');
+  used.add(rel);
+  const data = readFileSync(path.join(dist, rel)).toString('base64');
+  return `<link rel="icon" type="${type}" href="data:${type};base64,${data}" />`;
 });
 
 if (/<script[^>]+src=|<link[^>]+stylesheet[^>]+href=/.test(html)) {

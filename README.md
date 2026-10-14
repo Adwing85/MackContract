@@ -1,12 +1,18 @@
-# MackContract – Vertragsprüfung
+# MACK Rides Contract – Vertragsprüfung & Angebotsvergleich
 
-Webanwendung zur Prüfung von **Verträgen, Angeboten und Auftragsbestätigungen**:
+Webanwendung im Erscheinungsbild der MACK Rides CI zur Prüfung von **Verträgen, Angeboten und Auftragsbestätigungen**:
 
 - Dokumente hochladen (PDF, Word `.docx`, Text, HTML) oder Text direkt einfügen
 - **Anforderungen zeilenweise extrahieren** und als To-do-Liste abarbeiten:
   **Accepted** (erfüllbar), **Accepted with comments** (erfüllbar mit Abweichungen), **Declined** (nicht umsetzbar)
 - **Aufgabenverteilung**: einzelne Punkte Personen mit Termin zuweisen, die sie kommentieren und bewerten
-- **Gewichtete Bewertung** nach eigenen Kriterien und **Gegenüberstellung** mehrerer Dokumente
+- **Angebotsvergleich**: Konditionen (Lieferzeit, Incoterms, Zahlungsziel, Anzahlung, Skonto, Gewährleistung, Preisbindung,
+  Gültigkeit, Vertragsstrafe, Haftung) werden aus den Angebotstexten erkannt und mit Bestwerten gegenübergestellt
+- **Preisspiegel** nach Positionen inkl. Übernahme der Preiszeilen aus den Angeboten, „inkl.“/„nicht angeboten“ und Abweichung zum günstigsten Angebot
+- **Gewichtete Bewertung** (Nutzwertanalyse): Preis, Lieferzeit, Zahlungsziel, Gewährleistung und Anforderungserfüllung werden automatisch
+  gepunktet, weitere Kriterien manuell; K.O.-Kriterien möglich
+- **Ergebnis & Empfehlung**: Siegerpodest, Stärken/Schwächen, Punkteverteilung je Kriterium, Vergabeempfehlung mit Begründungsvorschlag
+  und druckfertiger Vergabevorschlag
 - **Textvergleich**, z. B. Angebot ↔ Auftragsbestätigung, mit wortgenauer Markierung der Abweichungen
 - CSV-Export (Excel-kompatibel) für Anforderungslisten, Bewertungsmatrix und Aufgaben
 
@@ -68,12 +74,21 @@ npm start          # http://localhost:3001 – liefert Oberfläche und API aus
 5. **Prüfen:** In der Anforderungsliste wird jeder Punkt direkt bewertet. Bei *Accepted with comments* und *Declined* fragt die App nach einer Begründung. Filter nach Status, Kategorie, Person und Risiken sowie Volltextsuche helfen beim Abarbeiten.
 6. **Verteilen:** Einzelne oder mehrere Punkte per Mehrfachauswahl einer Person mit Termin und Arbeitsauftrag zuweisen (in der Liste oder unter *Aufgabenverteilung*).
 7. **Bewerten durch die Zuständigen:** Unter *Meine Aufgaben* sieht jede Person ihre Punkte nach Fälligkeit sortiert (überfällig, nächste 7 Tage, später) und gibt Bewertung und Kommentar ab.
-8. **Gegenüberstellen:** Unter *Kriterien & Bewertung* die Kriterien gewichten und jedes Dokument mit 0–10 Punkten bewerten. Die *Gegenüberstellung* zeigt Ranking, Kriterienvergleich, Anforderungserfüllung und Eckdaten.
+8. **Angebote vergleichen** (Menü *Angebotsvergleich* oder Reiter im Projekt):
+   - *Angebotsvergleich*: „Konditionen aus Texten erkennen“ füllt Lieferzeit, Zahlungs- und Gewährleistungsbedingungen usw. vor; alle Werte sind
+     direkt editierbar, Bestwerte werden grün markiert. Im *Preisspiegel* Positionen anlegen oder per „Positionen aus Angebot übernehmen“
+     aus den Preiszeilen der Angebote erzeugen (Zuordnung zu bestehenden Positionen wird vorgeschlagen).
+   - *Bewertung*: Kriterien gewichten; automatische Kriterien rechnen relativ zum besten Angebot (z. B. Preis: günstigstes = 10 Punkte,
+     andere = 10 × günstigster Preis / eigener Preis), manuelle Kriterien mit 0–10 Punkten bewerten.
+   - *Ergebnis & Empfehlung*: Siegerpodest, Punkteverteilung, Kriterienvergleich; Vergabeempfehlung speichern und als Vergabevorschlag drucken.
+   - Standardmäßig werden nur Dokumente vom Typ *Angebot* verglichen; „Alle Dokumente“ bezieht z. B. Auftragsbestätigungen mit ein.
 
 ## Bewertungslogik
 
 - **Gesamtwert** = gewichteter Mittelwert aller bewerteten Kriterien (0–10, zusätzlich in Prozent). Ein Kriterium mit Gewicht 0 zählt nicht. Ist die Bewertung unvollständig, wird das Ergebnis als „vorläufig“ mit dem bereits bewerteten Anteil der Gewichtung angezeigt.
 - **Automatisches Kriterium „Erfüllung der Anforderungen“:** Accepted = 10, Accepted with comments = 5, Declined = 0 Punkte, gemittelt über alle bewerteten Anforderungen des Dokuments.
+- **Automatische Kriterien aus dem Angebotsvergleich:** Preis (Summe Preisspiegel, sonst Angebotssumme) und Lieferzeit: Bestwert / eigener Wert × 10;
+  Gewährleistung und Zahlungsziel: eigener Wert / Bestwert × 10. Fehlt eine Angabe, bleibt das Kriterium für dieses Angebot unbewertet.
 - **K.O.-Kriterien:** Bei manuellen Kriterien führen 0 Punkte zum Ausschluss, beim automatischen Kriterium jede *Declined*-Anforderung. Ausgeschlossene Dokumente werden im Ranking ans Ende sortiert.
 - **Status aus Prüfaufgaben:** Solange niemand manuell entschieden hat, übernimmt eine Anforderung das *kritischste* Ergebnis der abgeschlossenen Prüfaufgaben (Declined vor with comments vor Accepted). Eine manuelle Entscheidung hat Vorrang. „Zurücksetzen“ übernimmt wieder das Prüfergebnis.
 
@@ -88,6 +103,13 @@ Die Extraktion läuft lokal im Browser und arbeitet regelbasiert, ohne externe D
 - markiert Risikobegriffe (*Vertragsstrafe, unbeschränkt, ausgeschlossen, freibleibend, Teillieferung, Gerichtsstand* …) und ordnet eine Kategorie zu (Technisch, Kaufmännisch, Termine, Rechtlich, Qualität, Logistik)
 
 Grenzen: Gescannte PDFs enthalten keinen Text und müssen vorher per OCR umgewandelt werden (die App weist darauf hin). Automatische Nummerierungen in Word-Dateien gehen beim Textexport verloren. Der Dokumenttext lässt sich im Reiter *Dokumenttext* nachbearbeiten.
+
+## Erscheinungsbild
+
+Farben, Wortmarke und Bildmarke folgen der MACK Rides CI (Quelle: mack-rides.com; Markenzeichen der MACK Rides GmbH & Co KG).
+Die Hausschriften der Website sind lizenzpflichtig; die App nutzt die frei lizenzierten Schriften *Space Grotesk* (Überschriften) und
+*Inter* (Text, OFL). Logos liegen unter `src/assets/brand/` bzw. `src/components/brandPaths.ts` und lassen sich durch offizielle
+Dateien aus dem Corporate-Design-Portal ersetzen.
 
 ## Hinweise zum Betrieb
 

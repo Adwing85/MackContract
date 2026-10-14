@@ -38,8 +38,58 @@ export type StatusSource = 'manual' | 'review' | null;
 export const TASK_STATES = ['open', 'done'] as const;
 export type TaskState = (typeof TASK_STATES)[number];
 
-export const CRITERION_KINDS = ['manual', 'requirements'] as const;
+export const CRITERION_KINDS = ['manual', 'requirements', 'price', 'delivery', 'warranty', 'payment'] as const;
 export type CriterionKind = (typeof CRITERION_KINDS)[number];
+
+export const CRITERION_KIND_LABELS: Record<CriterionKind, string> = {
+  manual: 'Manuelle Bewertung (0–10)',
+  requirements: 'Automatisch: Erfüllung der Anforderungen',
+  price: 'Automatisch: Preis (günstigstes Angebot = 10)',
+  delivery: 'Automatisch: Lieferzeit (kürzeste = 10)',
+  warranty: 'Automatisch: Gewährleistung (längste = 10)',
+  payment: 'Automatisch: Zahlungsziel (längstes = 10)',
+};
+
+export const PRICE_BINDINGS = ['', 'fixed', 'non_binding'] as const;
+export type PriceBinding = (typeof PRICE_BINDINGS)[number];
+
+/** Kaufmännische Eckdaten eines Angebots für die Gegenüberstellung. */
+export interface OfferTerms {
+  deliveryWeeks?: number | null;
+  deliveryText?: string;
+  incoterms?: string;
+  paymentDays?: number | null;
+  downPaymentPct?: number | null;
+  discountPct?: number | null;
+  paymentText?: string;
+  warrantyMonths?: number | null;
+  validUntil?: string | null;
+  priceBinding?: PriceBinding;
+  penalty?: string;
+  liability?: string;
+  notes?: string;
+}
+
+export const PRICE_STATES = ['priced', 'included', 'not_offered'] as const;
+export type PriceState = (typeof PRICE_STATES)[number];
+
+export interface PricePosition {
+  id: number;
+  projectId: number;
+  position: number;
+  ref: string;
+  name: string;
+  quantity: number | null;
+  unit: string;
+}
+
+export interface PriceEntry {
+  positionId: number;
+  documentId: number;
+  price: number | null;
+  state: PriceState;
+  note: string;
+}
 
 export const CATEGORIES = [
   'Allgemein',
@@ -72,6 +122,8 @@ export interface Project {
   id: number;
   name: string;
   description: string;
+  recommendation: string;
+  recommendedDocumentId: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -95,6 +147,7 @@ export interface DocumentMeta {
   fileName: string | null;
   fileMime: string | null;
   hasFile: boolean;
+  terms: OfferTerms;
   contentLength: number;
   createdAt: string;
   updatedAt: string;
@@ -125,6 +178,8 @@ export interface Score {
 }
 
 export interface ProjectDetail extends Project {
+  positions: PricePosition[];
+  priceEntries: PriceEntry[];
   documents: DocumentMeta[];
   criteria: Criterion[];
   scores: Score[];

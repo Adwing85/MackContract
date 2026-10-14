@@ -1,9 +1,18 @@
-export function Logo({ size = 28 }: { size?: number }) {
+import emblemUrl from '../assets/brand/mack-emblem.png';
+import { WORDMARK_PATHS, WORDMARK_VIEWBOX } from './brandPaths';
+
+/** Wortmarke „MACK RIDES“ mit Speedlines – Farbe über currentColor. */
+export function MackWordmark({ className, title = 'MACK Rides' }: { className?: string; title?: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
-      <rect width="32" height="32" rx="7" fill="#2a78d6" />
-      <path d="M10 7h9l5 5v13a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z" fill="#fff" />
-      <path d="M12.5 18.5l2.5 2.5 5-5.5" fill="none" stroke="#2a78d6" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+    <svg className={className} viewBox={WORDMARK_VIEWBOX} role="img" aria-label={title} fill="currentColor">
+      {WORDMARK_PATHS.map((d, i) => (
+        <path key={i} d={d} />
+      ))}
     </svg>
   );
+}
+
+/** Rundes „M“-Emblem (Bildmarke). */
+export function MackEmblem({ size = 32, className }: { size?: number; className?: string }) {
+  return <img src={emblemUrl} width={size} height={size} alt="MACK Rides" className={className} />;
 }

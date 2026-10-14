@@ -1,4 +1,4 @@
-import type { Criterion, ReqStats, Score } from './types';
+import type { Criterion, CriterionKind, OfferTerms, ReqStats, Score } from './types';
 
 export const SCORE_MIN = 0;
 export const SCORE_MAX = 10;
@@ -34,6 +34,52 @@ export interface DocScoreResult {
 export interface ScoringDocument {
   id: number;
   stats: ReqStats;
+  /** Vergleichspreis (Preisspiegel-Summe oder Angebotssumme) */
+  price?: number | null;
+  terms?: OfferTerms;
+}
+
+export type MetricKind = Exclude<CriterionKind, 'manual' | 'requirements'>;
+
+/** Kennzahl eines Dokuments für die automatischen Kriterien. */
+function metric(doc: ScoringDocument, kind: MetricKind): number | null {
+  const value =
+    kind === 'price'
+      ? doc.price
+      : kind === 'delivery'
+        ? doc.terms?.deliveryWeeks
+        : kind === 'warranty'
+          ? doc.terms?.warrantyMonths
+          : doc.terms?.paymentDays;
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
+ * Punkte 0–10 relativ zum besten Angebot: Preis und Lieferzeit „kleiner ist besser“
+ * (Bestwert / Wert), Gewährleistung und Zahlungsziel „größer ist besser“ (Wert / Bestwert).
+ */
+export function metricScores(documents: ScoringDocument[], kind: MetricKind): Map<number, number | null> {
+  const values = documents.map((d) => metric(d, kind));
+  const valid = values.filter((v): v is number => v !== null);
+  const lowerIsBetter = kind === 'price' || kind === 'delivery';
+  const result = new Map<number, number | null>();
+  documents.forEach((d, i) => {
+    const v = values[i];
+    if (v === null || valid.length === 0) {
+      result.set(d.id, null);
+      return;
+    }
+    let score: number;
+    if (lowerIsBetter) {
+      const best = Math.min(...valid);
+      score = v === 0 ? SCORE_MAX : best === 0 ? 0 : (SCORE_MAX * best) / v;
+    } else {
+      const best = Math.max(...valid);
+      score = best === 0 ? SCORE_MAX : (SCORE_MAX * v) / best;
+    }
+    result.set(d.id, clampScore(Math.round(score * 10) / 10));
+  });
+  return result;
 }
 
 export function computeScores(
@@ -45,6 +91,11 @@ export function computeScores(
   for (const s of scores) byKey.set(`${s.documentId}:${s.criterionId}`, s);
   const active = criteria.filter((c) => c.weight > 0);
   const totalWeight = active.reduce((sum, c) => sum + c.weight, 0);
+  const metricCache = new Map<MetricKind, Map<number, number | null>>();
+  const autoScore = (kind: MetricKind, docId: number) => {
+    if (!metricCache.has(kind)) metricCache.set(kind, metricScores(documents, kind));
+    return metricCache.get(kind)!.get(docId) ?? null;
+  };
 
   const results: DocScoreResult[] = documents.map((doc) => {
     const perCriterion: Record<number, number | null> = {};
@@ -60,10 +111,13 @@ export function computeScores(
         if (c.knockout && doc.stats.declined > 0) {
           knockoutReasons.push(`${c.name}: ${doc.stats.declined} × Declined`);
         }
-      } else {
+      } else if (c.kind === 'manual') {
         const raw = byKey.get(`${doc.id}:${c.id}`)?.score;
         value = raw === undefined || raw === null ? null : clampScore(raw);
         if (c.knockout && value === 0) knockoutReasons.push(`${c.name}: 0 Punkte`);
+      } else {
+        value = autoScore(c.kind, doc.id);
+        if (c.knockout && value === null) knockoutReasons.push(`${c.name}: keine Angabe`);
       }
       perCriterion[c.id] = value;
       if (c.weight > 0 && value !== null) {
@@ -115,14 +169,14 @@ export const DEFAULT_CRITERIA: Array<{
   name: string;
   description: string;
   weight: number;
-  kind: 'manual' | 'requirements';
+  kind: CriterionKind;
   knockout?: boolean;
 }> = [
-  { name: 'Preis / Gesamtkosten', description: 'Preis, Nebenkosten, Preisbindung', weight: 8, kind: 'manual' },
+  { name: 'Preis / Gesamtkosten', description: 'Günstigstes Angebot = 10 Punkte', weight: 8, kind: 'price' },
   { name: 'Erfüllung der Anforderungen', description: 'Automatisch aus der Anforderungsprüfung berechnet', weight: 10, kind: 'requirements' },
-  { name: 'Liefertermin / Termintreue', description: 'Lieferzeit, verbindliche Termine', weight: 6, kind: 'manual' },
-  { name: 'Zahlungsbedingungen', description: 'Zahlungsziel, Anzahlungen, Sicherheiten', weight: 4, kind: 'manual' },
-  { name: 'Gewährleistung / Garantie', description: 'Dauer und Umfang der Mängelhaftung', weight: 5, kind: 'manual' },
+  { name: 'Lieferzeit', description: 'Kürzeste Lieferzeit = 10 Punkte', weight: 6, kind: 'delivery' },
+  { name: 'Zahlungsbedingungen', description: 'Längstes Zahlungsziel = 10 Punkte', weight: 4, kind: 'payment' },
+  { name: 'Gewährleistung / Garantie', description: 'Längste Gewährleistung = 10 Punkte', weight: 5, kind: 'warranty' },
   { name: 'Haftung & Vertragsrisiken', description: 'Haftungsbegrenzungen, Vertragsstrafen, AGB-Konflikte', weight: 6, kind: 'manual' },
   { name: 'Technische Qualität', description: 'Leistungsumfang, Spezifikation, Normen', weight: 7, kind: 'manual' },
   { name: 'Service & Support', description: 'Reaktionszeiten, Ersatzteile, Wartung', weight: 3, kind: 'manual' },

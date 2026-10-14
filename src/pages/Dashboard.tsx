@@ -1,16 +1,19 @@
-import { ChevronRight, Database, FolderKanban, ListTodo, Plus } from 'lucide-react';
+import { ChevronRight, Database, FolderKanban, ListTodo, Plus, Scale } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import { StatusBadge, StatusBar } from '../components/status';
+import { greeting, Hero } from '../components/Hero';
 import { DueChip, EmptyState, ErrorBox, Loading, StatTile } from '../components/ui';
 import { formatDateTime } from '../format';
 import { useAction, useAsync, useUsers } from '../state';
+import { ComparisonCard } from './Comparisons';
 import { NewProjectDialog } from './Projects';
 
 export function DashboardPage() {
   const { currentUser, reloadPeople } = useUsers();
   const { data, error, loading, reload } = useAsync(() => api.dashboard(), [currentUser?.id]);
+  const comparisons = useAsync(() => api.comparisons.list(), [data?.counts.documents]);
   const [creating, setCreating] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const run = useAction();
@@ -34,19 +37,39 @@ export function DashboardPage() {
 
   return (
     <div className="page">
-      <header className="page-header">
-        <div>
-          <h1>Übersicht</h1>
-          <p className="page-sub">
-            {currentUser ? `Hallo ${currentUser.name.split(' ')[0]} – hier ist der aktuelle Stand.` : 'Verträge, Angebote und Auftragsbestätigungen prüfen.'}
-          </p>
-        </div>
-        <div className="page-actions">
-          <button className="btn btn-primary" onClick={() => setCreating(true)}>
-            <Plus size={16} /> Neues Projekt
-          </button>
-        </div>
-      </header>
+      <Hero
+        eyebrow="MACK Rides · Contract"
+        title={currentUser ? `${greeting()}, ${currentUser.name.split(' ')[0]}.` : 'Verträge prüfen. Angebote vergleichen.'}
+        actions={
+          <>
+            <Link className="btn btn-hero-ghost" to="/comparisons">
+              <Scale size={16} /> Angebotsvergleich
+            </Link>
+            <button className="btn btn-hero" onClick={() => setCreating(true)}>
+              <Plus size={16} /> Neues Projekt
+            </button>
+          </>
+        }
+      >
+        <p className="hero-text">
+          {isEmpty
+            ? 'Verträge, Angebote und Auftragsbestätigungen zeilenweise prüfen, im Team bewerten und Angebote fundiert vergleichen.'
+            : 'Jede Anforderung sicher ins Ziel – hier ist der aktuelle Stand deiner Prüfungen.'}
+        </p>
+        {!isEmpty && (
+          <section className="stat-row hero-stats">
+            <StatTile label="Projekte" value={counts.projects} sub={`${counts.documents} Dokumente`} />
+            <StatTile label="Anforderungen offen" value={counts.openRequirements} sub={`von ${counts.requirements} insgesamt`} />
+            <StatTile label="Offene Prüfaufgaben" value={counts.openTasks} sub={<Link to="/tasks">Aufgabenverteilung</Link>} />
+            <StatTile
+              label="Überfällige Aufgaben"
+              value={counts.overdueTasks}
+              tone={counts.overdueTasks > 0 ? 'bad' : undefined}
+              sub={counts.overdueTasks > 0 ? <Link to="/tasks?overdue=1">Anzeigen</Link> : 'Alles im Plan'}
+            />
+          </section>
+        )}
+      </Hero>
 
       {__STANDALONE__ && (
         <div className="hint-box">
@@ -82,21 +105,23 @@ export function DashboardPage() {
         </div>
       ) : (
         <>
-          <section className="stat-row">
-            <StatTile label="Projekte" value={counts.projects} sub={`${counts.documents} Dokumente`} />
-            <StatTile
-              label="Anforderungen offen"
-              value={counts.openRequirements}
-              sub={`von ${counts.requirements} insgesamt`}
-            />
-            <StatTile label="Offene Prüfaufgaben" value={counts.openTasks} />
-            <StatTile
-              label="Überfällige Aufgaben"
-              value={counts.overdueTasks}
-              tone={counts.overdueTasks > 0 ? 'bad' : undefined}
-              sub={counts.overdueTasks > 0 ? <Link to="/tasks?overdue=1">Anzeigen</Link> : 'Alles im Plan'}
-            />
-          </section>
+          {comparisons.data && comparisons.data.length > 0 && (
+            <section className="stack-sm">
+              <div className="section-title">
+                <h2>
+                  <Scale size={18} /> Laufende Angebotsvergleiche
+                </h2>
+                <Link to="/comparisons" className="link-sm">
+                  Alle Vergleiche <ChevronRight size={14} />
+                </Link>
+              </div>
+              <div className="card-grid">
+                {comparisons.data.slice(0, 3).map((p) => (
+                  <ComparisonCard key={p.id} project={p} />
+                ))}
+              </div>
+            </section>
+          )}
 
           <div className="grid-2">
             <section className="card">

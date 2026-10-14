@@ -1,9 +1,10 @@
-import { ClipboardList, FolderKanban, LayoutDashboard, ListTodo, Users } from 'lucide-react';
+import { ClipboardList, FolderKanban, LayoutDashboard, ListTodo, Scale, Users } from 'lucide-react';
 import { NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { LocalDataPanel } from './components/LocalData';
-import { Logo } from './components/Logo';
+import { MackEmblem, MackWordmark } from './components/Logo';
 import { Avatar } from './components/ui';
+import { ComparisonsPage } from './pages/Comparisons';
 import { DashboardPage } from './pages/Dashboard';
 import { DocumentPage } from './pages/Document';
 import { MyTasksPage } from './pages/MyTasks';
@@ -16,6 +17,7 @@ import { useUsers } from './state';
 const NAV = [
   { to: '/', label: 'Übersicht', icon: LayoutDashboard, end: true },
   { to: '/projects', label: 'Projekte', icon: FolderKanban },
+  { to: '/comparisons', label: 'Angebotsvergleich', icon: Scale },
   { to: '/my-tasks', label: 'Meine Aufgaben', icon: ListTodo },
   { to: '/tasks', label: 'Aufgabenverteilung', icon: ClipboardList },
   { to: '/people', label: 'Personen', icon: Users },
@@ -54,13 +56,11 @@ export function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <div className="brand">
-          <Logo size={28} />
-          <div>
-            <strong>MackContract</strong>
-            <span>Vertragsprüfung</span>
-          </div>
-        </div>
+        <NavLink to="/" className="brand" aria-label="MACK Rides Contract – Übersicht">
+          <MackEmblem size={30} className="brand-emblem" />
+          <MackWordmark className="brand-wordmark" />
+          <span className="brand-product">Contract</span>
+        </NavLink>
         <nav className="nav">
           {NAV.map(({ to, label, icon: Icon, end }) => (
             <NavLink key={to} to={to} end={end} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
@@ -77,6 +77,7 @@ export function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectPage />} />
+          <Route path="/comparisons" element={<ComparisonsPage />} />
           <Route path="/documents/:id" element={<DocumentPage />} />
           <Route path="/my-tasks" element={<MyTasksPage />} />
           <Route path="/tasks" element={<TasksPage />} />

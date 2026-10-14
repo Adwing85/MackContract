@@ -8,7 +8,11 @@ import {
   type DocumentFull,
   type DocumentMeta,
   type NewRequirementInput,
+  type OfferTerms,
   type Person,
+  type PriceEntry,
+  type PricePosition,
+  type PriceState,
   type Project,
   type ProjectDetail,
   type ProjectSummary,
@@ -68,8 +72,38 @@ const mapProject = (r: Row): Project => ({
   id: r.id,
   name: r.name,
   description: r.description,
+  recommendation: r.recommendation ?? '',
+  recommendedDocumentId: r.recommended_document_id ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
+});
+
+function parseTerms(raw: unknown): OfferTerms {
+  if (typeof raw !== 'string' || !raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as OfferTerms) : {};
+  } catch {
+    return {};
+  }
+}
+
+const mapPosition = (r: Row): PricePosition => ({
+  id: r.id,
+  projectId: r.project_id,
+  position: r.position,
+  ref: r.ref,
+  name: r.name,
+  quantity: r.quantity,
+  unit: r.unit,
+});
+
+const mapEntry = (r: Row): PriceEntry => ({
+  positionId: r.position_id,
+  documentId: r.document_id,
+  price: r.price,
+  state: r.state,
+  note: r.note,
 });
 
 const mapDocumentMeta = (r: Row, stats: ReqStats): DocumentMeta => ({
@@ -85,6 +119,7 @@ const mapDocumentMeta = (r: Row, stats: ReqStats): DocumentMeta => ({
   fileName: r.file_name,
   fileMime: r.file_mime,
   hasFile: Boolean(r.file_path),
+  terms: parseTerms(r.terms),
   contentLength: r.content_length ?? 0,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -253,7 +288,21 @@ export function getProject(db: DB, id: number): ProjectDetail {
       `SELECT s.* FROM scores s JOIN documents d ON d.id = s.document_id WHERE d.project_id = ?`,
       id,
     ).map((r): Score => ({ documentId: r.document_id, criterionId: r.criterion_id, score: r.score, note: r.note })),
+    positions: all(db, 'SELECT * FROM price_positions WHERE project_id = ? ORDER BY position, id', id).map(mapPosition),
+    priceEntries: all(
+      db,
+      'SELECT e.* FROM price_entries e JOIN price_positions p ON p.id = e.position_id WHERE p.project_id = ?',
+      id,
+    ).map(mapEntry),
   };
+}
+
+/** Alle Projekte mit mindestens zwei Dokumenten – Grundlage der Vergleichsübersicht. */
+export function listComparisons(db: DB): ProjectDetail[] {
+  return all(
+    db,
+    `SELECT p.id FROM projects p WHERE (SELECT COUNT(*) FROM documents d WHERE d.project_id = p.id) >= 2 ORDER BY p.updated_at DESC`,
+  ).map((r) => getProject(db, r.id));
 }
 
 export function createProject(db: DB, input: { name: string; description: string; defaultCriteria: boolean }): ProjectDetail {
@@ -279,9 +328,22 @@ export function createProject(db: DB, input: { name: string; description: string
   return getProject(db, id);
 }
 
-export function updateProject(db: DB, id: number, patch: Partial<{ name: string; description: string }>): ProjectDetail {
+export function updateProject(
+  db: DB,
+  id: number,
+  patch: Partial<{ name: string; description: string; recommendation: string; recommendedDocumentId: number | null }>,
+): ProjectDetail {
   getProjectRow(db, id);
-  updateFields(db, 'projects', id, { name: patch.name, description: patch.description });
+  if (patch.recommendedDocumentId !== undefined && patch.recommendedDocumentId !== null) {
+    const doc = getDocumentRow(db, patch.recommendedDocumentId);
+    if (doc.project_id !== id) throw new HttpError(400, 'Das empfohlene Dokument gehört nicht zu diesem Projekt');
+  }
+  updateFields(db, 'projects', id, {
+    name: patch.name,
+    description: patch.description,
+    recommendation: patch.recommendation,
+    recommended_document_id: patch.recommendedDocumentId,
+  });
   return getProject(db, id);
 }
 
@@ -305,7 +367,7 @@ function touchProjectOfDocument(db: DB, documentId: number): void {
 // ---------------------------------------------------------------- Dokumente
 
 const DOC_META_COLUMNS = `d.id, d.project_id, d.title, d.doc_type, d.counterparty, d.doc_date, d.reference, d.amount,
-  d.currency, d.file_name, d.file_path, d.file_mime, d.created_at, d.updated_at, LENGTH(d.content) AS content_length`;
+  d.currency, d.file_name, d.file_path, d.file_mime, d.terms, d.created_at, d.updated_at, LENGTH(d.content) AS content_length`;
 
 export function listDocuments(db: DB, projectId: number): DocumentMeta[] {
   const rows = all(db, `SELECT ${DOC_META_COLUMNS} FROM documents d WHERE d.project_id = ? ORDER BY d.created_at, d.id`, projectId);
@@ -372,10 +434,21 @@ export function createDocument(db: DB, projectId: number, input: DocumentInput):
 export function updateDocument(
   db: DB,
   id: number,
-  patch: Partial<Omit<DocumentInput, 'fileName' | 'filePath' | 'fileMime'>>,
+  patch: Partial<Omit<DocumentInput, 'fileName' | 'filePath' | 'fileMime'>> & { terms?: OfferTerms },
 ): DocumentFull {
-  getDocumentRow(db, id);
+  const row = getDocumentRow(db, id);
+  let terms: string | undefined;
+  if (patch.terms) {
+    // Konditionen werden zusammengeführt; null/leer entfernt einen Wert.
+    const merged: Record<string, unknown> = { ...parseTerms(row.terms) };
+    for (const [key, value] of Object.entries(patch.terms)) {
+      if (value === null || value === undefined || value === '') delete merged[key];
+      else merged[key] = value;
+    }
+    terms = JSON.stringify(merged);
+  }
   updateFields(db, 'documents', id, {
+    terms,
     title: patch.title,
     doc_type: patch.docType,
     counterparty: patch.counterparty,
@@ -394,6 +467,81 @@ export function deleteDocument(db: DB, id: number): string | null {
   run(db, 'DELETE FROM documents WHERE id = ?', id);
   touchProject(db, row.project_id);
   return row.file_path ?? null;
+}
+
+// ---------------------------------------------------------------- Preisspiegel
+
+export interface PositionInput {
+  ref: string;
+  name: string;
+  quantity: number | null;
+  unit: string;
+}
+
+function getPositionRow(db: DB, id: number): Row {
+  return get(db, 'SELECT * FROM price_positions WHERE id = ?', id) ?? notFound('Position');
+}
+
+export function createPositions(
+  db: DB,
+  projectId: number,
+  items: Array<PositionInput & { prices?: Array<{ documentId: number; price: number | null; state: PriceState }> }>,
+): PricePosition[] {
+  getProjectRow(db, projectId);
+  const docIds = new Set(listDocuments(db, projectId).map((d) => d.id));
+  const ids = transaction(db, () => {
+    let pos = get(db, 'SELECT COALESCE(MAX(position), -1) + 1 AS p FROM price_positions WHERE project_id = ?', projectId)!.p as number;
+    return items.map((item) => {
+      const id = insertId(
+        db,
+        'INSERT INTO price_positions (project_id, position, ref, name, quantity, unit) VALUES (?, ?, ?, ?, ?, ?)',
+        projectId,
+        pos++,
+        item.ref,
+        item.name,
+        item.quantity,
+        item.unit,
+      );
+      for (const price of item.prices ?? []) {
+        if (!docIds.has(price.documentId)) throw new HttpError(400, 'Dokument gehört nicht zu diesem Projekt');
+        setPriceEntry(db, { positionId: id, documentId: price.documentId, price: price.price, state: price.state, note: '' });
+      }
+      return id;
+    });
+  });
+  touchProject(db, projectId);
+  return ids.map((id) => mapPosition(getPositionRow(db, id)));
+}
+
+export function updatePosition(db: DB, id: number, patch: Partial<PositionInput & { position: number }>): PricePosition {
+  const row = getPositionRow(db, id);
+  updateFields(db, 'price_positions', id, { ref: patch.ref, name: patch.name, quantity: patch.quantity, unit: patch.unit, position: patch.position }, false);
+  touchProject(db, row.project_id);
+  return mapPosition(getPositionRow(db, id));
+}
+
+export function deletePosition(db: DB, id: number): void {
+  const row = getPositionRow(db, id);
+  run(db, 'DELETE FROM price_positions WHERE id = ?', id);
+  touchProject(db, row.project_id);
+}
+
+export function setPriceEntry(db: DB, input: PriceEntry): PriceEntry {
+  const position = getPositionRow(db, input.positionId);
+  const doc = getDocumentRow(db, input.documentId);
+  if (position.project_id !== doc.project_id) throw new HttpError(400, 'Position und Dokument gehören zu unterschiedlichen Projekten');
+  run(
+    db,
+    `INSERT INTO price_entries (position_id, document_id, price, state, note) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT (position_id, document_id) DO UPDATE SET price = excluded.price, state = excluded.state, note = excluded.note`,
+    input.positionId,
+    input.documentId,
+    input.state === 'priced' ? input.price : null,
+    input.state,
+    input.note,
+  );
+  touchProject(db, doc.project_id);
+  return mapEntry(get(db, 'SELECT * FROM price_entries WHERE position_id = ? AND document_id = ?', input.positionId, input.documentId)!);
 }
 
 // ---------------------------------------------------------------- Kriterien & Bewertung

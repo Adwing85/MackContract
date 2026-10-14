@@ -1,15 +1,48 @@
 import { Ban, Download, MessageSquare, Pencil, Plus, Sparkles, Trash2, Trophy } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { computeScores, weightShare } from '../../../shared/scoring';
-import { CRITERION_KINDS, DOC_TYPE_LABELS, type Criterion, type CriterionKind, type ProjectDetail, type Score } from '../../../shared/types';
+import { weightShare } from '../../../shared/scoring';
+import {
+  CRITERION_KIND_LABELS,
+  CRITERION_KINDS,
+  DOC_TYPE_LABELS,
+  type Criterion,
+  type CriterionKind,
+  type DocumentMeta,
+  type ProjectDetail,
+  type Score,
+} from '../../../shared/types';
 import { api } from '../../api';
+import { ScopeToggle } from '../../components/ScopeToggle';
 import { EmptyState, Field, Modal } from '../../components/ui';
-import { downloadCsv, formatNumber, formatPercent, safeFileName } from '../../format';
+import { analyzeProject, useScope, type Analysis } from '../../comparison';
+import { downloadCsv, formatMoney, formatNumber, formatPercent, safeFileName } from '../../format';
 import { useAction } from '../../state';
 
-const KIND_LABELS: Record<CriterionKind, string> = {
-  manual: 'Manuelle Bewertung (0–10)',
-  requirements: 'Automatisch aus Anforderungsprüfung',
+/** Erläuterung, woraus ein automatisches Kriterium seinen Wert bezieht. */
+function autoSource(kind: CriterionKind, doc: DocumentMeta, analysis: Analysis): string {
+  switch (kind) {
+    case 'requirements':
+      return `Aus ${doc.stats.total - doc.stats.open} bewerteten Anforderungen: Accepted = 10, with comments = 5, Declined = 0`;
+    case 'price':
+      return `Vergleichspreis ${formatMoney(analysis.prices.get(doc.id) ?? null, doc.currency)} – günstigstes Angebot = 10`;
+    case 'delivery':
+      return `Lieferzeit ${doc.terms.deliveryWeeks ?? '–'} Wochen – kürzeste = 10`;
+    case 'warranty':
+      return `Gewährleistung ${doc.terms.warrantyMonths ?? '–'} Monate – längste = 10`;
+    case 'payment':
+      return `Zahlungsziel ${doc.terms.paymentDays ?? '–'} Tage – längstes = 10`;
+    default:
+      return '';
+  }
+}
+
+const AUTO_CHIP: Record<CriterionKind, string> = {
+  manual: '',
+  requirements: 'aus Anforderungen',
+  price: 'aus Preis',
+  delivery: 'aus Lieferzeit',
+  warranty: 'aus Gewährleistung',
+  payment: 'aus Zahlungsziel',
 };
 
 function ScoreInput({ value, onCommit, label }: { value: number | null; onCommit: (v: number | null) => void; label: string }) {
@@ -68,11 +101,10 @@ export function ScoringTab({
   const projectRef = useRef(project);
   projectRef.current = project;
 
-  const results = useMemo(
-    () => computeScores(project.criteria, project.documents, project.scores),
-    [project.criteria, project.documents, project.scores],
-  );
-  const resultByDoc = new Map(results.map((r) => [r.documentId, r]));
+  const [includeAll, setIncludeAll] = useScope();
+  const analysis = useMemo(() => analyzeProject(project, includeAll), [project, includeAll]);
+  const docs = analysis.docs;
+  const resultByDoc = analysis.byDoc;
   const scoreMap = new Map(project.scores.map((s) => [`${s.documentId}:${s.criterionId}`, s]));
   const totalWeight = project.criteria.reduce((s, c) => s + c.weight, 0);
 
@@ -104,7 +136,6 @@ export function ScoringTab({
   };
 
   const exportCsv = () => {
-    const docs = project.documents;
     const rows: Array<Array<string | number | null>> = [
       ['Kriterium', 'Gewichtung', 'Anteil', ...docs.map((d) => `${d.title} (${DOC_TYPE_LABELS[d.docType]})`)],
     ];
@@ -126,13 +157,14 @@ export function ScoringTab({
 
   return (
     <section>
-      <div className="toolbar">
+      <div className="toolbar wrap">
         <p className="muted">
-          Gewichte die Kriterien nach ihrer Bedeutung und bewerte jedes Dokument von 0 (ungenügend) bis 10 (hervorragend). Der Gesamtwert ist
-          der gewichtete Mittelwert der bewerteten Kriterien.
+          Gewichte die Kriterien nach ihrer Bedeutung. Preis, Lieferzeit, Zahlungsziel, Gewährleistung und Anforderungen punktet die App
+          automatisch aus dem Angebotsvergleich; alle übrigen bewertest du von 0 (ungenügend) bis 10 (hervorragend).
         </p>
         <div className="toolbar-spacer" />
-        <button className="btn" onClick={exportCsv} disabled={project.documents.length === 0}>
+        {analysis.canToggleScope && <ScopeToggle includeAll={includeAll} onChange={setIncludeAll} />}
+        <button className="btn" onClick={exportCsv} disabled={docs.length === 0}>
           <Download size={16} /> CSV
         </button>
         <button className="btn btn-primary" onClick={() => setEditing('new')}>
@@ -159,7 +191,7 @@ export function ScoringTab({
               <tr>
                 <th className="col-criterion">Kriterium</th>
                 <th className="col-weight">Gewichtung</th>
-                {project.documents.map((d) => (
+                {docs.map((d) => (
                   <th key={d.id} className="col-doc">
                     <span className="doc-head-title">{d.title}</span>
                     <small>{d.counterparty || DOC_TYPE_LABELS[d.docType]}</small>
@@ -181,9 +213,9 @@ export function ScoringTab({
                       </div>
                       {c.description && <div className="criterion-desc">{c.description}</div>}
                       <div className="chips">
-                        {c.kind === 'requirements' && (
+                        {c.kind !== 'manual' && (
                           <span className="chip chip-accent">
-                            <Sparkles size={12} /> automatisch
+                            <Sparkles size={12} /> {AUTO_CHIP[c.kind]}
                           </span>
                         )}
                         {c.knockout && (
@@ -211,16 +243,13 @@ export function ScoringTab({
                         <span>{formatPercent(share * 100)}</span>
                       </div>
                     </td>
-                    {project.documents.map((d) => {
+                    {docs.map((d) => {
                       const value = resultByDoc.get(d.id)?.perCriterion[c.id] ?? null;
                       const s = scoreMap.get(`${d.id}:${c.id}`);
                       return (
                         <td key={d.id} className="score-cell" style={{ ['--score' as string]: value ?? 0 }} data-empty={value === null}>
-                          {c.kind === 'requirements' ? (
-                            <span
-                              className="score-auto"
-                              title={`Aus ${d.stats.total - d.stats.open} bewerteten Anforderungen: Accepted = 10, with comments = 5, Declined = 0`}
-                            >
+                          {c.kind !== 'manual' ? (
+                            <span className="score-auto" title={autoSource(c.kind, d, analysis)}>
                               {formatNumber(value, 1)}
                             </span>
                           ) : (
@@ -247,7 +276,7 @@ export function ScoringTab({
               <tr className="total-row">
                 <th className="col-criterion">Gesamt (gewichtet)</th>
                 <td className="col-weight muted">Σ {totalWeight}</td>
-                {project.documents.map((d) => {
+                {docs.map((d) => {
                   const r = resultByDoc.get(d.id);
                   return (
                     <td key={d.id} className="total-cell">
@@ -261,7 +290,7 @@ export function ScoringTab({
               <tr>
                 <th className="col-criterion">Rang</th>
                 <td className="col-weight" />
-                {project.documents.map((d) => {
+                {docs.map((d) => {
                   const r = resultByDoc.get(d.id);
                   return (
                     <td key={d.id} className="rank-cell">
@@ -283,7 +312,7 @@ export function ScoringTab({
               <tr>
                 <th className="col-criterion">Bewertungsstand</th>
                 <td className="col-weight" />
-                {project.documents.map((d) => {
+                {docs.map((d) => {
                   const r = resultByDoc.get(d.id);
                   return (
                     <td key={d.id} className="muted small">
@@ -294,7 +323,7 @@ export function ScoringTab({
               </tr>
             </tfoot>
           </table>
-          {project.documents.length === 0 && <p className="muted pad">Füge Dokumente hinzu, um sie zu bewerten.</p>}
+          {docs.length === 0 && <p className="muted pad">Füge Dokumente hinzu, um sie zu bewerten.</p>}
         </div>
       )}
 
@@ -401,7 +430,7 @@ function CriterionDialog({
           <select className="select" value={kind} onChange={(e) => setKind(e.target.value as CriterionKind)}>
             {CRITERION_KINDS.map((k) => (
               <option key={k} value={k}>
-                {KIND_LABELS[k]}
+                {CRITERION_KIND_LABELS[k]}
               </option>
             ))}
           </select>
@@ -410,7 +439,12 @@ function CriterionDialog({
           <input type="checkbox" checked={knockout} onChange={(e) => setKnockout(e.target.checked)} />
           <span>
             Ausschlusskriterium (K.O.) –{' '}
-            {kind === 'requirements' ? 'jede mit „Declined“ bewertete Anforderung' : 'eine Bewertung mit 0 Punkten'} führt zum Ausschluss
+            {kind === 'requirements'
+              ? 'jede mit „Declined“ bewertete Anforderung'
+              : kind === 'manual'
+                ? 'eine Bewertung mit 0 Punkten'
+                : 'eine fehlende Angabe'}{' '}
+            führt zum Ausschluss
           </span>
         </label>
       </div>

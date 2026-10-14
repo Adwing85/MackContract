@@ -1,6 +1,7 @@
 // Beispieldaten (fiktive Firmen und Personen) zum Ausprobieren der Anwendung.
 
 import { extractCandidates } from '../shared/extract';
+import { detectTerms } from '../shared/offers';
 import type { DocType, Rating } from '../shared/types';
 import type { DB } from './db';
 import { transaction } from './db';
@@ -58,13 +59,24 @@ Bearbeitungszentrum Alpha VX 800
 3. Preise und Zahlung
 3.1 Der Gesamtpreis beträgt 412.000,00 EUR netto.
 3.2 Zahlung: 30 % Anzahlung bei Auftragserteilung, 70 % nach Abnahme innerhalb von 30 Tagen netto.
+3.3 Bei Zahlung innerhalb von 10 Tagen gewähren wir 2 % Skonto.
 
 4. Gewährleistung
 4.1 Die Gewährleistung beträgt 24 Monate ab Abnahme.
 4.2 Die Haftung für Folgeschäden ist ausgeschlossen.
 
 5. Service
-5.1 Ein Servicetechniker ist innerhalb von 24 Stunden vor Ort.`;
+5.1 Ein Servicetechniker ist innerhalb von 24 Stunden vor Ort.
+
+6. Preisübersicht
+Pos. 1 Bearbeitungszentrum Alpha VX 800 inkl. Steuerung 352.000,00 EUR
+Pos. 2 Werkzeugmagazin 40 Plätze 18.500,00 EUR
+Pos. 3 Späneförderer und Kühlmittelanlage 14.500,00 EUR
+Pos. 4 Transport und Montage 19.000,00 EUR
+Pos. 5 Inbetriebnahme und Schulung 8.000,00 EUR
+Gesamtsumme netto 412.000,00 EUR
+
+Dieses Angebot ist gültig bis 30.11.2026.`;
 
 const OFFER_BETA = `Angebot 2026/4471
 Beta Maschinenbau AG – Fräszentrum BM 6
@@ -80,13 +92,23 @@ Beta Maschinenbau AG – Fräszentrum BM 6
 
 3. Preise und Zahlung
 3.1 Der Gesamtpreis beträgt 389.500,00 EUR netto. Die Preise sind freibleibend.
-3.2 Zahlung: 50 % Anzahlung bei Auftragserteilung, 50 % vor Versand.
+3.2 Zahlung: 50 % Anzahlung bei Auftragserteilung, Restzahlung innerhalb von 14 Tagen netto nach Lieferung.
 
 4. Gewährleistung
 4.1 Die Gewährleistung beträgt 12 Monate ab Lieferung.
 
 5. Service
-5.1 Reaktionszeit des Service: 48 Stunden an Werktagen.`;
+5.1 Reaktionszeit des Service: 48 Stunden an Werktagen.
+5.2 Schulungen bieten wir auf Anfrage gesondert an.
+
+6. Preisübersicht
+Pos. 1 Fräszentrum BM 6 inkl. Steuerung 331.000,00 EUR
+Pos. 2 Werkzeugmagazin 30 Plätze 21.000,00 EUR
+Pos. 3 Späneförderer und Kühlmittelanlage 12.500,00 EUR
+Pos. 4 Transport und Montage 25.000,00 EUR
+Gesamtsumme netto 389.500,00 EUR
+
+Angebot gültig bis 15.11.2026.`;
 
 const OFFER_GAMMA = `Angebot Nr. G-0926-33
 Gamma CNC-Technik GmbH & Co. KG – Bearbeitungszentrum GX 5
@@ -108,7 +130,17 @@ Gamma CNC-Technik GmbH & Co. KG – Bearbeitungszentrum GX 5
 4.1 Die Gewährleistung beträgt 36 Monate ab Abnahme.
 
 5. Service
-5.1 Ein Servicetechniker ist innerhalb von 24 Stunden vor Ort; Ersatzteile sind 10 Jahre verfügbar.`;
+5.1 Ein Servicetechniker ist innerhalb von 24 Stunden vor Ort; Ersatzteile sind 10 Jahre verfügbar.
+
+6. Preisübersicht
+Pos. 1 Bearbeitungszentrum GX 5 inkl. Steuerung 389.000,00 EUR
+Pos. 2 Werkzeugmagazin 60 Plätze 24.000,00 EUR
+Pos. 3 Späneförderer und Kühlmittelanlage inklusive
+Pos. 4 Transport und Montage 30.000,00 EUR
+Pos. 5 Inbetriebnahme und Schulung 12.000,00 EUR
+Gesamtsumme netto 455.000,00 EUR
+
+Das Angebot ist gültig bis 31.12.2026.`;
 
 const ORDER_CONFIRMATION_ALPHA = `Auftragsbestätigung Nr. AB-2026-1192 zu Angebot A-2026-0815
 Bearbeitungszentrum Alpha VX 800
@@ -157,6 +189,7 @@ function addDocument(
     filePath: null,
     fileMime: null,
   });
+  store.updateDocument(db, created.id, { terms: detectTerms(doc.content) });
   const candidates = extractCandidates(doc.content, { mode: 'sentences', sensitivity: 'medium' }).filter((c) => c.isRequirement);
   const requirements = store.createRequirements(
     db,
@@ -280,11 +313,8 @@ export function seedDemo(db: DB): { projectIds: number[] } {
 
     const project = store.getProject(db, p2.id);
     const criterion = (prefix: string) => project.criteria.find((c) => c.name.startsWith(prefix))!;
+    // Preis, Lieferzeit, Zahlungsziel und Gewährleistung berechnet die App automatisch.
     const scoreTable: Array<[string, number, number, number]> = [
-      ['Preis', 7, 8, 6],
-      ['Liefertermin', 7, 4, 9],
-      ['Zahlungsbedingungen', 7, 3, 9],
-      ['Gewährleistung', 6, 3, 9],
       ['Haftung', 5, 4, 7],
       ['Technische', 8, 6, 9],
       ['Service', 8, 5, 9],
@@ -297,10 +327,35 @@ export function seedDemo(db: DB): { projectIds: number[] } {
     }
     store.setScore(db, {
       documentId: beta.doc.id,
-      criterionId: criterion('Preis').id,
-      score: 8,
-      note: 'Günstigster Preis, aber freibleibend.',
+      criterionId: criterion('Haftung').id,
+      score: 4,
+      note: 'Preise freibleibend, Teillieferungen vorbehalten.',
     });
+
+    // Preisspiegel: gemeinsame Positionen, Preise je Angebot (null = nicht angeboten, 'incl' = inklusive)
+    const priceTable: Array<[string, string, number | null | 'incl', number | null | 'incl', number | null | 'incl']> = [
+      ['1', 'Bearbeitungszentrum inkl. Steuerung', 352000, 331000, 389000],
+      ['2', 'Werkzeugmagazin', 18500, 21000, 24000],
+      ['3', 'Späneförderer und Kühlmittelanlage', 14500, 12500, 'incl'],
+      ['4', 'Transport und Montage', 19000, 25000, 30000],
+      ['5', 'Inbetriebnahme und Schulung', 8000, null, 12000],
+    ];
+    const offerDocs = [alpha.doc.id, beta.doc.id, gamma.doc.id];
+    store.createPositions(
+      db,
+      p2.id,
+      priceTable.map(([ref, name, ...prices]) => ({
+        ref,
+        name,
+        quantity: 1,
+        unit: 'psch',
+        prices: prices.map((price, i) => ({
+          documentId: offerDocs[i],
+          price: typeof price === 'number' ? price : null,
+          state: price === 'incl' ? ('included' as const) : price === null ? ('not_offered' as const) : ('priced' as const),
+        })),
+      })),
+    );
 
     const rateAll = (requirements: typeof alpha.requirements, decide: (text: string) => Rating) => {
       for (const r of requirements) store.updateRequirement(db, r.id, { status: decide(r.text) }, murat.id);

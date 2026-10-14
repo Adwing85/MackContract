@@ -2,7 +2,17 @@
 // Browser-Version (src/local/backend.ts) nutzen dieselbe Routentabelle.
 
 import { normalizeContent } from '../shared/extract';
-import { CRITERION_KINDS, DOC_TYPES, RATINGS, REQ_STATUSES, TASK_STATES, type NewRequirementInput } from '../shared/types';
+import {
+  CRITERION_KINDS,
+  DOC_TYPES,
+  PRICE_BINDINGS,
+  PRICE_STATES,
+  RATINGS,
+  REQ_STATUSES,
+  TASK_STATES,
+  type NewRequirementInput,
+  type OfferTerms,
+} from '../shared/types';
 import type { DB } from './db';
 import { seedDemo } from './demo';
 import * as store from './store';
@@ -74,6 +84,40 @@ export function resolveActor(db: DB, raw: string | null | undefined): number | n
   } catch {
     return null;
   }
+}
+
+/** Prüft die Konditionen eines Angebots; null/leer löscht einen Wert. */
+function parseTermsInput(raw: unknown): OfferTerms | undefined {
+  if (raw === undefined) return undefined;
+  const body = asBody(raw);
+  const numberField = (key: string, max: number) => optionalNumber(body, key, { min: 0, max });
+  const terms: Record<string, unknown> = {
+    deliveryWeeks: numberField('deliveryWeeks', 520),
+    paymentDays: numberField('paymentDays', 3650),
+    downPaymentPct: numberField('downPaymentPct', 100),
+    discountPct: numberField('discountPct', 100),
+    warrantyMonths: numberField('warrantyMonths', 600),
+    validUntil: optionalDate(body, 'validUntil'),
+    priceBinding: body.priceBinding === null ? '' : optionalEnum(body, 'priceBinding', PRICE_BINDINGS),
+    incoterms: optionalString(body, 'incoterms', 50),
+    deliveryText: optionalString(body, 'deliveryText', 1000),
+    paymentText: optionalString(body, 'paymentText', 1000),
+    penalty: optionalString(body, 'penalty', 1000),
+    liability: optionalString(body, 'liability', 1000),
+    notes: optionalString(body, 'notes', 2000),
+  };
+  for (const key of Object.keys(terms)) if (terms[key] === undefined) delete terms[key];
+  return terms as OfferTerms;
+}
+
+function parsePositionInput(raw: unknown) {
+  const item = asBody(raw);
+  return {
+    ref: optionalString(item, 'ref', 50) ?? '',
+    name: requiredString(item, 'name', 'Bezeichnung', 500),
+    quantity: optionalNumber(item, 'quantity', { min: 0 }) ?? null,
+    unit: optionalString(item, 'unit', 30) ?? '',
+  };
 }
 
 function extensionOf(fileName: string): string {
@@ -156,6 +200,9 @@ export function createRoutes(db: DB, files: FileStore, newFileKey: (extension: s
           store.updateProject(db, idParam(params.id), {
             name: body.name === undefined ? undefined : requiredString(body, 'name', 'Projektname', 200),
             description: optionalString(body, 'description', 5000),
+            recommendation: optionalString(body, 'recommendation', 10000),
+            recommendedDocumentId:
+              body.recommendedDocumentId === undefined ? undefined : body.recommendedDocumentId === null ? null : idParam(body.recommendedDocumentId, 'Dokument-ID'),
           }),
         );
       },
@@ -237,6 +284,7 @@ export function createRoutes(db: DB, files: FileStore, newFileKey: (extension: s
             amount: optionalNumber(body, 'amount'),
             currency: optionalString(body, 'currency', 10),
             content: content === undefined ? undefined : normalizeContent(content),
+            terms: parseTermsInput(body.terms),
           }),
         );
       },
@@ -247,6 +295,73 @@ export function createRoutes(db: DB, files: FileStore, newFileKey: (extension: s
       handle: async ({ params }) => {
         await removeFile(store.deleteDocument(db, idParam(params.id)));
         return noContent;
+      },
+    },
+
+    // ---------------------------------------------------------- Angebotsvergleich & Preisspiegel
+    { method: 'GET', path: '/comparisons', handle: () => ok(store.listComparisons(db)) },
+    {
+      method: 'POST',
+      path: '/projects/:id/positions',
+      handle: ({ params, body: raw }) => {
+        const body = asBody(raw);
+        const rawItems = Array.isArray(body.items) ? body.items : [body];
+        if (rawItems.length > 2000) throw new HttpError(400, 'Zu viele Positionen auf einmal');
+        const items = rawItems.map((value) => {
+          const item = asBody(value);
+          const prices = Array.isArray(item.prices)
+            ? item.prices.map((p) => {
+                const price = asBody(p);
+                return {
+                  documentId: idParam(price.documentId, 'Dokument-ID'),
+                  price: optionalNumber(price, 'price', { min: 0 }) ?? null,
+                  state: optionalEnum(price, 'state', PRICE_STATES) ?? 'priced',
+                };
+              })
+            : [];
+          return { ...parsePositionInput(item), prices };
+        });
+        return ok(store.createPositions(db, idParam(params.id), items), 201);
+      },
+    },
+    {
+      method: 'PATCH',
+      path: '/positions/:id',
+      handle: ({ params, body: raw }) => {
+        const body = asBody(raw);
+        return ok(
+          store.updatePosition(db, idParam(params.id), {
+            ref: optionalString(body, 'ref', 50),
+            name: body.name === undefined ? undefined : requiredString(body, 'name', 'Bezeichnung', 500),
+            quantity: optionalNumber(body, 'quantity', { min: 0 }),
+            unit: optionalString(body, 'unit', 30),
+            position: optionalNumber(body, 'position', { min: 0 }) ?? undefined,
+          } as Parameters<typeof store.updatePosition>[2]),
+        );
+      },
+    },
+    {
+      method: 'DELETE',
+      path: '/positions/:id',
+      handle: ({ params }) => {
+        store.deletePosition(db, idParam(params.id));
+        return noContent;
+      },
+    },
+    {
+      method: 'PUT',
+      path: '/price-entries',
+      handle: ({ body: raw }) => {
+        const body = asBody(raw);
+        return ok(
+          store.setPriceEntry(db, {
+            positionId: idParam(body.positionId, 'Positions-ID'),
+            documentId: idParam(body.documentId, 'Dokument-ID'),
+            price: optionalNumber(body, 'price', { min: 0 }) ?? null,
+            state: optionalEnum(body, 'state', PRICE_STATES) ?? 'priced',
+            note: optionalString(body, 'note', 1000) ?? '',
+          }),
+        );
       },
     },
 
