@@ -1,6 +1,19 @@
-import { DatabaseSync } from 'node:sqlite';
+// Umgebungsunabhängiges Schema und Hilfsfunktionen. Die konkrete SQLite-Anbindung
+// liefert server/sqlite-node.ts (node:sqlite) bzw. src/local/sqljs.ts (sql.js im Browser).
 
-export type DB = DatabaseSync;
+export type SQLValue = null | number | bigint | string | Uint8Array;
+
+export interface Statement {
+  run(...params: SQLValue[]): { changes: number | bigint; lastInsertRowid: number | bigint };
+  get(...params: SQLValue[]): unknown;
+  all(...params: SQLValue[]): unknown[];
+}
+
+export interface DB {
+  exec(sql: string): void;
+  prepare(sql: string): Statement;
+  close(): void;
+}
 
 const MIGRATIONS: string[] = [
   `
@@ -106,10 +119,10 @@ const MIGRATIONS: string[] = [
   `,
 ];
 
-export function openDb(file: string): DB {
-  const db = new DatabaseSync(file);
+/** Aktiviert Fremdschlüssel und bringt das Schema auf den neuesten Stand. */
+export function initDb<T extends DB>(db: T, options: { wal?: boolean } = {}): T {
   db.exec('PRAGMA foreign_keys = ON;');
-  if (file !== ':memory:') db.exec('PRAGMA journal_mode = WAL;');
+  if (options.wal) db.exec('PRAGMA journal_mode = WAL;');
   migrate(db);
   return db;
 }

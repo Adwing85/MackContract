@@ -1,6 +1,8 @@
 import { ClipboardList, FolderKanban, LayoutDashboard, ListTodo, Users } from 'lucide-react';
 import { NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
+import { LocalDataPanel } from './components/LocalData';
+import { Logo } from './components/Logo';
 import { Avatar } from './components/ui';
 import { DashboardPage } from './pages/Dashboard';
 import { DocumentPage } from './pages/Document';
@@ -53,7 +55,7 @@ export function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <img src="/favicon.svg" alt="" width={28} height={28} />
+          <Logo size={28} />
           <div>
             <strong>MackContract</strong>
             <span>Vertragsprüfung</span>
@@ -67,6 +69,7 @@ export function App() {
             </NavLink>
           ))}
         </nav>
+        {__STANDALONE__ && <LocalDataPanel />}
         <UserSwitcher />
       </aside>
       <main className="main">

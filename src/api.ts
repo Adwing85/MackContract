@@ -18,22 +18,22 @@ import type {
   TaskWithContext,
 } from '../shared/types';
 
+import { ApiError } from './apiError';
+
+export { ApiError };
+
 let currentUserId: number | null = null;
 
 export function setApiUser(id: number | null): void {
   currentUserId = id;
 }
 
-export class ApiError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+  if (__STANDALONE__) {
+    // Eigenständige HTML-Version: Anfrage direkt im Browser beantworten.
+    const { localRequest } = await import('./local/backend');
+    return (await localRequest(method, url, body, currentUserId)) as T;
+  }
   const headers: Record<string, string> = {};
   if (currentUserId) headers['X-User-Id'] = String(currentUserId);
   let payload: BodyInit | undefined;
@@ -96,7 +96,13 @@ export const api = {
     get: (id: number) => request<DocumentFull>('GET', `/documents/${id}`),
     update: (id: number, patch: DocumentFields) => request<DocumentFull>('PATCH', `/documents/${id}`, patch),
     remove: (id: number) => request<void>('DELETE', `/documents/${id}`),
-    fileUrl: (id: number) => `/api/documents/${id}/file`,
+    openFile: async (id: number) => {
+      if (__STANDALONE__) {
+        const { openLocalFile } = await import('./local/backend');
+        return openLocalFile(id);
+      }
+      window.open(`/api/documents/${id}/file`, '_blank', 'noopener');
+    },
   },
 
   criteria: {

@@ -1,4 +1,3 @@
-import type { SQLInputValue } from 'node:sqlite';
 import { DEFAULT_CRITERIA } from '../shared/scoring';
 import {
   emptyStats,
@@ -23,10 +22,10 @@ import {
   type TaskBrief,
   type TaskWithContext,
 } from '../shared/types';
-import { nowIso, transaction, type DB } from './db';
+import { nowIso, transaction, type DB, type SQLValue } from './db';
 
 type Row = Record<string, any>;
-type Params = SQLInputValue[];
+type Params = SQLValue[];
 
 export class HttpError extends Error {
   constructor(
@@ -47,8 +46,8 @@ function notFound(what: string): never {
 }
 
 /** Baut ein UPDATE aus einem Patch-Objekt; nur erlaubte Felder werden übernommen. */
-function updateFields(db: DB, table: string, id: number, patch: Record<string, SQLInputValue | undefined>, touch = true) {
-  const entries = Object.entries(patch).filter(([, v]) => v !== undefined) as Array<[string, SQLInputValue]>;
+function updateFields(db: DB, table: string, id: number, patch: Record<string, SQLValue | undefined>, touch = true) {
+  const entries = Object.entries(patch).filter(([, v]) => v !== undefined) as Array<[string, SQLValue]>;
   if (touch) entries.push(['updated_at', nowIso()]);
   if (entries.length === 0) return;
   const sets = entries.map(([k]) => `${k} = ?`).join(', ');

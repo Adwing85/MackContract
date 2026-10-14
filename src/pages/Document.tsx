@@ -99,9 +99,9 @@ export function DocumentPage() {
         </div>
         <div className="page-actions">
           {d.hasFile && (
-            <a className="btn" href={api.documents.fileUrl(d.id)} target="_blank" rel="noreferrer">
+            <button className="btn" onClick={() => run(() => api.documents.openFile(d.id))} title={d.fileName ?? undefined}>
               <ExternalLink size={16} /> Original
-            </a>
+            </button>
           )}
           <button className="btn" onClick={() => setEditingMeta(true)}>
             <Pencil size={16} /> Bearbeiten

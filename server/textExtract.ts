@@ -60,10 +60,11 @@ function linesFromItems(items: PdfItem[]): string[] {
   return out;
 }
 
-async function extractPdf(buffer: Buffer): Promise<ExtractedText> {
+async function extractPdf(data: Uint8Array): Promise<ExtractedText> {
   let pdf;
   try {
-    pdf = await getDocumentProxy(new Uint8Array(buffer));
+    // Kopie übergeben: PDF.js übernimmt den Puffer und macht ihn sonst unbrauchbar.
+    pdf = await getDocumentProxy(new Uint8Array(data));
   } catch {
     throw new HttpError(400, 'Die PDF-Datei konnte nicht gelesen werden (beschädigt oder passwortgeschützt?)');
   }
@@ -88,20 +89,23 @@ async function extractPdf(buffer: Buffer): Promise<ExtractedText> {
   return { text, warning };
 }
 
-async function extractDocx(buffer: Buffer): Promise<ExtractedText> {
+async function extractDocx(data: Uint8Array): Promise<ExtractedText> {
   try {
-    const result = await mammoth.extractRawText({ buffer });
+    // Node.js liest „buffer“, der Browser-Build von mammoth „arrayBuffer“.
+    const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+    const input = { buffer: data, arrayBuffer } as unknown as { buffer: Buffer };
+    const result = await mammoth.extractRawText(input);
     return { text: normalizeContent(result.value) };
   } catch {
     throw new HttpError(400, 'Die Word-Datei konnte nicht gelesen werden');
   }
 }
 
-function decodeText(buffer: Buffer): string {
+function decodeText(data: Uint8Array): string {
   try {
-    return new TextDecoder('utf-8', { fatal: true }).decode(buffer).replace(/^﻿/, '');
+    return new TextDecoder('utf-8', { fatal: true }).decode(data).replace(/^\uFEFF/, '');
   } catch {
-    return new TextDecoder('windows-1252').decode(buffer);
+    return new TextDecoder('windows-1252').decode(data);
   }
 }
 
@@ -120,20 +124,20 @@ function stripHtml(html: string): string {
 
 export const SUPPORTED_EXTENSIONS = ['pdf', 'docx', 'txt', 'md', 'csv', 'html', 'htm'];
 
-export async function extractTextFromFile(buffer: Buffer, fileName: string): Promise<ExtractedText> {
+export async function extractTextFromFile(data: Uint8Array, fileName: string): Promise<ExtractedText> {
   const ext = fileName.toLowerCase().split('.').pop() ?? '';
   switch (ext) {
     case 'pdf':
-      return extractPdf(buffer);
+      return extractPdf(data);
     case 'docx':
-      return extractDocx(buffer);
+      return extractDocx(data);
     case 'txt':
     case 'md':
     case 'csv':
-      return { text: normalizeContent(decodeText(buffer)) };
+      return { text: normalizeContent(decodeText(data)) };
     case 'html':
     case 'htm':
-      return { text: normalizeContent(stripHtml(decodeText(buffer))) };
+      return { text: normalizeContent(stripHtml(decodeText(data))) };
     case 'doc':
       throw new HttpError(400, 'Das alte Word-Format (.doc) wird nicht unterstützt. Bitte als .docx oder PDF speichern.');
     default:

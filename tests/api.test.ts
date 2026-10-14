@@ -4,7 +4,8 @@ import path from 'node:path';
 import request from 'supertest';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApp } from '../server/app';
-import { openDb, type DB } from '../server/db';
+import type { DB } from '../server/db';
+import { openDb } from '../server/sqlite-node';
 
 const uploadDir = mkdtempSync(path.join(tmpdir(), 'mackcontract-test-'));
 let db: DB;

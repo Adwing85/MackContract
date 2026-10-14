@@ -48,6 +48,15 @@ export function DashboardPage() {
         </div>
       </header>
 
+      {__STANDALONE__ && (
+        <div className="hint-box">
+          <p>
+            <strong>Lokale Version:</strong> Alle Daten werden nur in diesem Browser gespeichert. Mit „Sicherung speichern“ lassen sie
+            sich sichern oder an Kolleginnen und Kollegen weitergeben. Für die gleichzeitige Arbeit im Team gibt es die Server-Version.
+          </p>
+        </div>
+      )}
+
       {isEmpty ? (
         <div className="card">
           <EmptyState

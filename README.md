@@ -12,7 +12,23 @@ Webanwendung zur Prüfung von **Verträgen, Angeboten und Auftragsbestätigungen
 
 Die Oberfläche ist deutschsprachig, funktioniert im Hell- und Dunkelmodus und auf Mobilgeräten.
 
-## Schnellstart
+## Eigenständige HTML-Datei (ohne Installation)
+
+**[`standalone/MackContract.html`](standalone/MackContract.html)** herunterladen und per Doppelklick im Browser öffnen
+(Chrome, Edge, Firefox oder Safari in einer aktuellen Version). Es wird kein Server und keine Installation benötigt.
+
+- Alle Funktionen sind enthalten: Upload und Text-Extraktion aus PDF und Word laufen lokal im Browser.
+- Die Daten werden **nur in diesem Browser** gespeichert (IndexedDB). Sie bleiben beim Schließen erhalten, gehen aber verloren,
+  wenn die Browserdaten gelöscht werden.
+- **Sicherung speichern** (links unten) lädt eine JSON-Datei mit allen Projekten und Originaldateien herunter.
+  **Sicherung laden** stellt sie wieder her, auch auf einem anderen Rechner. Auch die Datenbankdatei der Server-Version
+  (`data/mackcontract.db`) lässt sich dort laden.
+- Für die **gleichzeitige Arbeit im Team** (gemeinsame Aufgabenverteilung) ist die Server-Version gedacht, weil die HTML-Datei
+  keine Daten zwischen Rechnern abgleicht.
+
+Neu erzeugen: `npm run build:html` (Ergebnis: `standalone/MackContract.html`).
+
+## Schnellstart (Server-Version)
 
 Voraussetzung: **Node.js 22.13 oder neuer** (verwendet die eingebaute SQLite-Datenbank `node:sqlite`, keine nativen Zusatzpakete).
 
@@ -83,11 +99,14 @@ Grenzen: Gescannte PDFs enthalten keinen Text und müssen vorher per OCR umgewan
 ```bash
 npm test           # Unit- und API-Tests (Vitest + Supertest)
 npm run typecheck  # TypeScript-Prüfung
+npm run build:html # eigenständige HTML-Datei bauen
+npm run dev:html   # HTML-Version mit Hot Reload entwickeln
 ```
 
 ```
 shared/   Domänentypen, Anforderungsextraktion, Bewertungslogik, Textvergleich (Server + Browser)
-server/   Express-API, SQLite-Schema und Datenzugriff, Text-Extraktion aus PDF/DOCX, Beispieldaten
-src/      React-Oberfläche (Vite)
+server/   API-Routen (routes.ts, gemeinsam für Server und HTML-Version), Express-Anbindung, SQLite-Schema
+          und Datenzugriff, Text-Extraktion aus PDF/DOCX, Beispieldaten
+src/      React-Oberfläche (Vite); src/local/ = Browser-Backend der HTML-Version (sql.js + IndexedDB)
 tests/    Tests
 ```
