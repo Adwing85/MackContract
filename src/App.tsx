@@ -1,0 +1,86 @@
+import { ClipboardList, FolderKanban, LayoutDashboard, ListTodo, Users } from 'lucide-react';
+import { NavLink, Route, Routes, useLocation } from 'react-router-dom';
+import { useEffect } from 'react';
+import { Avatar } from './components/ui';
+import { DashboardPage } from './pages/Dashboard';
+import { DocumentPage } from './pages/Document';
+import { MyTasksPage } from './pages/MyTasks';
+import { PeoplePage } from './pages/People';
+import { ProjectPage } from './pages/Project';
+import { ProjectsPage } from './pages/Projects';
+import { TasksPage } from './pages/Tasks';
+import { useUsers } from './state';
+
+const NAV = [
+  { to: '/', label: 'Übersicht', icon: LayoutDashboard, end: true },
+  { to: '/projects', label: 'Projekte', icon: FolderKanban },
+  { to: '/my-tasks', label: 'Meine Aufgaben', icon: ListTodo },
+  { to: '/tasks', label: 'Aufgabenverteilung', icon: ClipboardList },
+  { to: '/people', label: 'Personen', icon: Users },
+];
+
+function UserSwitcher() {
+  const { people, currentUser, setCurrentUserId } = useUsers();
+  return (
+    <div className="user-switcher">
+      {currentUser ? <Avatar name={currentUser.name} size={30} /> : <span className="avatar avatar-empty">?</span>}
+      <label className="user-switcher-select">
+        <span className="user-switcher-label">Angemeldet als</span>
+        <select
+          value={currentUser?.id ?? ''}
+          onChange={(e) => setCurrentUserId(e.target.value ? Number(e.target.value) : null)}
+          aria-label="Aktuelle Person auswählen"
+        >
+          <option value="">– Person wählen –</option>
+          {people.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+}
+
+export function App() {
+  const location = useLocation();
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [location.pathname]);
+
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <div className="brand">
+          <img src="/favicon.svg" alt="" width={28} height={28} />
+          <div>
+            <strong>MackContract</strong>
+            <span>Vertragsprüfung</span>
+          </div>
+        </div>
+        <nav className="nav">
+          {NAV.map(({ to, label, icon: Icon, end }) => (
+            <NavLink key={to} to={to} end={end} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+              <Icon size={18} aria-hidden />
+              <span>{label}</span>
+            </NavLink>
+          ))}
+        </nav>
+        <UserSwitcher />
+      </aside>
+      <main className="main">
+        <Routes>
+          <Route path="/" element={<DashboardPage />} />
+          <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/projects/:id" element={<ProjectPage />} />
+          <Route path="/documents/:id" element={<DocumentPage />} />
+          <Route path="/my-tasks" element={<MyTasksPage />} />
+          <Route path="/tasks" element={<TasksPage />} />
+          <Route path="/people" element={<PeoplePage />} />
+          <Route path="*" element={<div className="page"><h1>Seite nicht gefunden</h1></div>} />
+        </Routes>
+      </main>
+    </div>
+  );
+}
