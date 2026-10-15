@@ -5,6 +5,7 @@ import { detectTerms } from '../shared/offers';
 import type { DocType, Rating } from '../shared/types';
 import type { DB } from './db';
 import { transaction } from './db';
+import * as standards from './standardsStore';
 import * as store from './store';
 
 const CONTRACT = `Liefervertrag Nr. NW-2026-114
@@ -365,6 +366,37 @@ export function seedDemo(db: DB): { projectIds: number[] } {
       t.includes('freibleibend') || t.includes('Teillieferungen') ? 'declined' : t.includes('12 Monate') || t.includes('ca. 20') ? 'accepted_with_comments' : 'accepted',
     );
     rateAll(gamma.requirements, () => 'accepted');
+
+    // ---------------------------------------------------- Eigene Standards
+    const sales = standards.createStandard(db, {
+      name: 'Verkaufsstandard (Beispiel)',
+      description: 'Beispielhafte Positionen für Kundenverträge inkl. Beispiel-AGB – Werte bitte an die eigenen Vorgaben anpassen.',
+      scope: 'sales',
+      template: 'sales',
+      exampleDocument: true,
+    });
+    store.updateProject(db, p1.id, { standardId: sales.id });
+    standards.runDocumentCheck(db, contract.doc.id, sales.id, anna.id);
+    const deviations = standards.listDeviations(db, { documentId: contract.doc.id, standardId: sales.id });
+    const dev = (title: string, kind: string = 'rule') => deviations.find((d) => d.kind === kind && d.title === title);
+    const liability = dev('Keine unbegrenzte Haftung');
+    if (liability) standards.updateDeviation(db, liability.id, { status: 'negotiate', assigneeId: lena.id, dueDate: isoDate(5), comment: 'Haftungsbegrenzung auf Auftragswert fordern.' }, anna.id);
+    const payment = dev('Zahlungsziel');
+    if (payment) standards.updateDeviation(db, payment.id, { assigneeId: murat.id, dueDate: isoDate(3), comment: 'Gegenvorschlag 45 Tage mit Freigabe kaufmännische Leitung.' }, anna.id);
+    const court = dev('Gerichtsstand');
+    if (court) standards.updateDeviation(db, court.id, { status: 'accepted', comment: 'Gerichtsstand Kassel ist unkritisch.' }, lena.id);
+    const reservation = dev('Eigentumsvorbehalt');
+    if (reservation) standards.updateDeviation(db, reservation.id, { assigneeId: lena.id, dueDate: isoDate(-1) }, anna.id);
+
+    const purchase = standards.createStandard(db, {
+      name: 'Einkaufsstandard (Beispiel)',
+      description: 'Beispielhafte Anforderungen an Lieferantenangebote – Werte bitte an die eigenen Einkaufsbedingungen anpassen.',
+      scope: 'purchase',
+      template: 'purchase',
+      exampleDocument: false,
+    });
+    store.updateProject(db, p2.id, { standardId: purchase.id });
+    for (const offer of [alpha, beta, gamma]) standards.runDocumentCheck(db, offer.doc.id, purchase.id, murat.id);
 
     return { projectIds: [p1.id, p2.id] };
   });

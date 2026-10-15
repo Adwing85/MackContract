@@ -6,6 +6,7 @@ import { unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { DB } from './db';
 import { createRoutes, MAX_UPLOAD_BYTES, resolveActor, type FileStore } from './routes';
+import * as standards from './standardsStore';
 import * as store from './store';
 import { HttpError } from './store';
 import { idParam } from './validate';
@@ -51,6 +52,18 @@ export function createApp({ db, uploadDir, staticDir }: AppOptions) {
     const full = filePath(file.path);
     if (!existsSync(full)) throw new HttpError(404, 'Datei nicht mehr vorhanden');
     // Inhaltstyp aus der Endung ableiten (nicht vom Browser übernehmen) und nur unkritische Typen inline anzeigen.
+    const safe = SAFE_INLINE_TYPES[path.extname(file.name).toLowerCase()];
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', 'sandbox');
+    res.setHeader('Content-Type', safe ?? 'application/octet-stream');
+    res.setHeader('Content-Disposition', `${safe ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+    res.sendFile(full);
+  });
+
+  api.get('/standard-documents/:id/file', (req, res) => {
+    const file = standards.getStandardDocumentFile(db, idParam(req.params.id));
+    const full = filePath(file.path);
+    if (!existsSync(full)) throw new HttpError(404, 'Datei nicht mehr vorhanden');
     const safe = SAFE_INLINE_TYPES[path.extname(file.name).toLowerCase()];
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Content-Security-Policy', 'sandbox');

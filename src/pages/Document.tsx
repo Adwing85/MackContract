@@ -1,4 +1,4 @@
-import { ArrowLeft, ExternalLink, FileText, ListChecks, Pencil, Trash2 } from 'lucide-react';
+import { ArrowLeft, ExternalLink, FileText, ListChecks, Pencil, ShieldCheck, Trash2 } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { DOC_TYPES, DOC_TYPE_LABELS, emptyStats, type DocType, type DocumentFull, type Requirement } from '../../shared/types';
@@ -10,6 +10,7 @@ import { useAction, useAsync, useToast } from '../state';
 import { ExtractDialog } from './document/ExtractDialog';
 import { RequirementDrawer } from './document/RequirementDrawer';
 import { RequirementsPanel } from './document/RequirementsPanel';
+import { StandardCheckPanel } from './document/StandardCheckPanel';
 import { TextPanel } from './document/TextPanel';
 
 export function DocumentPage() {
@@ -123,6 +124,7 @@ export function DocumentPage() {
         onChange={(t) => updateParams({ tab: t === 'requirements' ? null : t, line: null })}
         tabs={[
           { id: 'requirements', label: 'Anforderungen', icon: <ListChecks size={16} />, count: stats.total },
+          { id: 'standards', label: 'Standardprüfung', icon: <ShieldCheck size={16} />, count: d.lastCheck?.openDeviations || undefined },
           { id: 'text', label: 'Dokumenttext', icon: <FileText size={16} /> },
         ]}
       />
@@ -144,6 +146,8 @@ export function DocumentPage() {
         ) : (
           <Loading />
         ))}
+
+      {tab === 'standards' && <StandardCheckPanel doc={d} onDocChange={doc.setData} onShowLine={showLine} />}
 
       {tab === 'text' && (
         <TextPanel

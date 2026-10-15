@@ -1,5 +1,7 @@
 // Gemeinsame Domänentypen für Server und Client.
 
+import type { LastCheckInfo, StandardRule } from './standards';
+
 export const DOC_TYPES = ['contract', 'offer', 'order_confirmation', 'other'] as const;
 export type DocType = (typeof DOC_TYPES)[number];
 
@@ -66,7 +68,13 @@ export interface OfferTerms {
   validUntil?: string | null;
   priceBinding?: PriceBinding;
   penalty?: string;
+  /** Obergrenze der Vertragsstrafe in % des Auftragswerts */
+  penaltyCapPct?: number | null;
   liability?: string;
+  /** Haftungsobergrenze in % des Auftragswerts */
+  liabilityCapPct?: number | null;
+  jurisdiction?: string;
+  governingLaw?: string;
   notes?: string;
 }
 
@@ -124,6 +132,8 @@ export interface Project {
   description: string;
   recommendation: string;
   recommendedDocumentId: number | null;
+  /** Standard, gegen den die Dokumente dieses Projekts geprüft werden */
+  standardId: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -148,6 +158,7 @@ export interface DocumentMeta {
   fileMime: string | null;
   hasFile: boolean;
   terms: OfferTerms;
+  lastCheck: LastCheckInfo | null;
   contentLength: number;
   createdAt: string;
   updatedAt: string;
@@ -157,6 +168,8 @@ export interface DocumentMeta {
 export interface DocumentFull extends DocumentMeta {
   content: string;
   projectName: string;
+  /** Standard, der dem Projekt zugeordnet ist (Vorauswahl für die Standardprüfung) */
+  projectStandardId: number | null;
 }
 
 export interface Criterion {
@@ -178,6 +191,9 @@ export interface Score {
 }
 
 export interface ProjectDetail extends Project {
+  /** Regeln des Projekt-Standards (für Markierungen im Angebotsvergleich) */
+  standardRules: StandardRule[];
+  standardName: string | null;
   positions: PricePosition[];
   priceEntries: PriceEntry[];
   documents: DocumentMeta[];
@@ -268,6 +284,7 @@ export interface DashboardData {
     openRequirements: number;
     openTasks: number;
     overdueTasks: number;
+    openDeviations: number;
   };
   myTasks: TaskWithContext[];
   recentProjects: ProjectSummary[];

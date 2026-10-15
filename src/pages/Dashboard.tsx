@@ -1,4 +1,4 @@
-import { ChevronRight, Database, FolderKanban, ListTodo, Plus, Scale } from 'lucide-react';
+import { ChevronRight, Database, FolderKanban, ListTodo, Plus, Scale, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api';
@@ -14,6 +14,10 @@ export function DashboardPage() {
   const { currentUser, reloadPeople } = useUsers();
   const { data, error, loading, reload } = useAsync(() => api.dashboard(), [currentUser?.id]);
   const comparisons = useAsync(() => api.comparisons.list(), [data?.counts.documents]);
+  const myDeviations = useAsync(
+    () => (currentUser ? api.deviations.list({ assigneeId: currentUser.id, open: true }) : Promise.resolve([])),
+    [currentUser?.id, data?.counts.openDeviations],
+  );
   const [creating, setCreating] = useState(false);
   const [seeding, setSeeding] = useState(false);
   const run = useAction();
@@ -66,6 +70,12 @@ export function DashboardPage() {
               value={counts.overdueTasks}
               tone={counts.overdueTasks > 0 ? 'bad' : undefined}
               sub={counts.overdueTasks > 0 ? <Link to="/tasks?overdue=1">Anzeigen</Link> : 'Alles im Plan'}
+            />
+            <StatTile
+              label="Offene Abweichungen"
+              value={counts.openDeviations}
+              tone={counts.openDeviations > 0 ? 'warn' : undefined}
+              sub={<Link to="/standards?tab=register">Abweichungsregister</Link>}
             />
           </section>
         )}
@@ -135,7 +145,7 @@ export function DashboardPage() {
               </div>
               {!currentUser ? (
                 <p className="muted pad">Wähle links unten aus, wer du bist, um deine Aufgaben zu sehen.</p>
-              ) : data.myTasks.length === 0 ? (
+              ) : data.myTasks.length === 0 && !myDeviations.data?.length ? (
                 <p className="muted pad">Keine offenen Aufgaben – alles erledigt.</p>
               ) : (
                 <ul className="list">
@@ -152,6 +162,17 @@ export function DashboardPage() {
                       <DueChip date={t.dueDate} />
                     </li>
                   ))}
+                  {myDeviations.data && myDeviations.data.length > 0 && (
+                    <li className="list-item clickable" onClick={() => navigate('/my-tasks')}>
+                      <div className="list-main">
+                        <div className="list-title">
+                          <ShieldCheck size={14} aria-hidden /> {myDeviations.data.length} Abweichung{myDeviations.data.length === 1 ? '' : 'en'} vom Standard zu klären
+                        </div>
+                        <div className="list-meta">{[...new Set(myDeviations.data.map((d) => d.documentTitle))].join(' · ')}</div>
+                      </div>
+                      <DueChip date={myDeviations.data.map((d) => d.dueDate).filter((x): x is string => Boolean(x)).sort()[0] ?? null} />
+                    </li>
+                  )}
                 </ul>
               )}
             </section>

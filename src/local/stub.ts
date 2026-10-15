@@ -4,6 +4,7 @@ const unavailable = (): never => {
 };
 export const localRequest = unavailable;
 export const openLocalFile = unavailable;
+export const openLocalStandardFile = unavailable;
 export const exportBackup = unavailable;
 export const importBackup = unavailable;
 export const resetLocalData = unavailable;

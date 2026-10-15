@@ -1,4 +1,4 @@
-import { CircleCheck, ExternalLink, ListTodo, RotateCcw } from 'lucide-react';
+import { CircleCheck, ExternalLink, ListTodo, RotateCcw, ShieldCheck } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import type { TaskWithContext } from '../../shared/types';
@@ -8,6 +8,7 @@ import { DocTypeBadge, DueChip, EmptyState, ErrorBox, Loading } from '../compone
 import { daysUntil, formatDateTime } from '../format';
 import { useAction, useAsync, useUsers } from '../state';
 import { TaskResponseForm } from './document/TaskResponseForm';
+import { DeviationRow } from './Standards';
 
 type View = 'open' | 'done';
 
@@ -36,6 +37,10 @@ export function MyTasksPage() {
   const { data, error, loading, reload } = useAsync(
     () => (currentUser ? api.tasks.list({ assigneeId: currentUser.id, state: view }) : Promise.resolve([])),
     [currentUser?.id, view],
+  );
+  const deviations = useAsync(
+    () => (currentUser ? api.deviations.list({ assigneeId: currentUser.id, open: true }) : Promise.resolve([])),
+    [currentUser?.id],
   );
   const location = useLocation();
   const run = useAction();
@@ -144,7 +149,25 @@ export function MyTasksPage() {
 
       {error && <ErrorBox message={error} onRetry={reload} />}
       {!data && loading && <Loading />}
-      {data && data.length === 0 && (
+      {view === 'open' && deviations.data && deviations.data.length > 0 && (
+        <section className="task-group">
+          <h2>
+            <ShieldCheck size={18} aria-hidden /> Abweichungen vom Standard klären <span className="count">{deviations.data.length}</span>
+          </h2>
+          <p className="muted small">Entscheide, ob die Abweichung akzeptiert, nachverhandelt oder abgelehnt wird, und halte den Stand fest.</p>
+          <div className="card dev-list">
+            {deviations.data.map((d) => (
+              <DeviationRow
+                key={d.id}
+                deviation={d}
+                showContext
+                onChange={(u) => deviations.setData((prev) => (prev ?? []).map((x) => (x.id === u.id ? { ...x, ...u } : x)))}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+      {data && data.length === 0 && !(view === 'open' && deviations.data?.length) && (
         <div className="card">
           <EmptyState
             icon={<CircleCheck size={36} />}

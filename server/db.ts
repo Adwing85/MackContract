@@ -159,6 +159,87 @@ const MIGRATIONS: string[] = [
     PRIMARY KEY (position_id, document_id)
   );
   `,
+  // 3: Eigene Standards (Regeln + Referenzdokumente), Standardprüfungen und Abweichungsregister
+  `
+  CREATE TABLE standards (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    scope TEXT NOT NULL DEFAULT 'general',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
+
+  CREATE TABLE standard_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    standard_id INTEGER NOT NULL REFERENCES standards(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'Allgemein',
+    kind TEXT NOT NULL,
+    metric TEXT NOT NULL DEFAULT '',
+    target TEXT NOT NULL DEFAULT '',
+    tolerance TEXT NOT NULL DEFAULT '',
+    severity TEXT NOT NULL DEFAULT 'major',
+    guidance TEXT NOT NULL DEFAULT '',
+    active INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE INDEX idx_standard_rules ON standard_rules(standard_id, position);
+
+  CREATE TABLE standard_documents (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    standard_id INTEGER NOT NULL REFERENCES standards(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'agb',
+    content TEXT NOT NULL DEFAULT '',
+    file_name TEXT,
+    file_path TEXT,
+    file_mime TEXT,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
+  CREATE INDEX idx_standard_documents ON standard_documents(standard_id);
+
+  CREATE TABLE standard_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    standard_id INTEGER NOT NULL REFERENCES standards(id) ON DELETE CASCADE,
+    checked_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    checked_by INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    summary TEXT NOT NULL DEFAULT '{}',
+    findings TEXT NOT NULL DEFAULT '[]'
+  );
+  CREATE INDEX idx_standard_checks ON standard_checks(document_id, standard_id, checked_at);
+
+  CREATE TABLE deviations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    standard_id INTEGER NOT NULL REFERENCES standards(id) ON DELETE CASCADE,
+    finding_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT '',
+    expected TEXT NOT NULL DEFAULT '',
+    actual TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL DEFAULT '',
+    source_line INTEGER,
+    severity TEXT NOT NULL DEFAULT 'major',
+    result TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    comment TEXT NOT NULL DEFAULT '',
+    assignee_id INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    due_date TEXT,
+    first_detected_at TEXT NOT NULL,
+    last_checked_at TEXT NOT NULL,
+    resolved_at TEXT,
+    decided_by INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    decided_at TEXT,
+    UNIQUE (document_id, standard_id, finding_key)
+  );
+  CREATE INDEX idx_deviations_status ON deviations(status);
+  CREATE INDEX idx_deviations_assignee ON deviations(assignee_id);
+
+  ALTER TABLE projects ADD COLUMN standard_id INTEGER REFERENCES standards(id) ON DELETE SET NULL;
+  `,
 ];
 
 /** Aktiviert Fremdschlüssel und bringt das Schema auf den neuesten Stand. */

@@ -1,8 +1,9 @@
-import { Download, Plus, Sparkles, Trash2, Trophy, TriangleAlert } from 'lucide-react';
+import { Download, Plus, ShieldCheck, Sparkles, Trash2, Trophy, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { bestValue, detectTerms, extractPriceLines, mergeDetected, PRICE_BINDING_LABELS, positionTotal, TERM_FIELDS, type TermField } from '../../../shared/offers';
 import { requirementScore } from '../../../shared/scoring';
+import { describeRule, evaluateRule, type StandardRule } from '../../../shared/standards';
 import type { DocumentMeta, OfferTerms, PriceEntry, PricePosition, PriceState, ProjectDetail } from '../../../shared/types';
 import { api } from '../../api';
 import { seriesVar } from '../../components/charts';
@@ -228,6 +229,22 @@ function TermsCard({
   const docs = analysis.docs;
   const priceValues = docs.map((d) => analysis.prices.get(d.id) ?? null);
   const bestPrice = bestValue(priceValues, 'lower');
+  const rulesByMetric = new Map<string, StandardRule[]>();
+  for (const r of project.standardRules) {
+    if (!r.active || !r.metric) continue;
+    rulesByMetric.set(r.metric, [...(rulesByMetric.get(r.metric) ?? []), r]);
+  }
+  /** Ergebnis der Standard-Regeln für einen gepflegten Konditionswert. */
+  const standardCheck = (field: TermField, d: DocumentMeta) => {
+    const rules = rulesByMetric.get(field.key);
+    const v = d.terms[field.key];
+    if (!rules || v === undefined || v === null || v === '') return null;
+    const results = rules.map((r) => ({ rule: r, finding: evaluateRule(r, { terms: d.terms, detected: {}, sentences: [] }) }));
+    const bad = results.find((x) => x.finding.result === 'deviation');
+    const warn = results.find((x) => x.finding.result === 'tolerated');
+    const hit = bad ?? warn;
+    return hit ? { tone: bad ? 'bad' : 'warn', text: `${hit.rule.title}: Standard ${hit.finding.expected}` } : { tone: 'good', text: 'entspricht dem Standard' };
+  };
 
   return (
     <div className="card">
@@ -310,14 +327,20 @@ function TermsCard({
                   <th className="offer-label">
                     {field.label}
                     {field.unit && <small>{field.unit}</small>}
+                    {rulesByMetric.has(field.key) && (
+                      <small className="std-hint" title={`Projekt-Standard „${project.standardName ?? ''}“`}>
+                        <ShieldCheck size={11} aria-hidden /> {rulesByMetric.get(field.key)!.map((r) => describeRule(r)).join(' · ')}
+                      </small>
+                    )}
                   </th>
                   {docs.map((d, i) => {
                     const v = values[i];
                     const isBest = best !== null && typeof v === 'number' && v === best;
                     const label = `${field.label} ${d.title}`;
                     const commit = (value: unknown) => onPatch(d, { terms: { [field.key]: value === '' ? null : value } as OfferTerms });
+                    const std = standardCheck(field, d);
                     return (
-                      <td key={d.id} className={isBest ? 'best' : ''}>
+                      <td key={d.id} className={`${isBest ? 'best' : ''} ${std && std.tone !== 'good' ? `std-${std.tone}` : ''}`}>
                         {field.type === 'number' ? (
                           <>
                             <div className="cell-with-unit">
@@ -342,12 +365,43 @@ function TermsCard({
                         ) : (
                           <TextCell value={v as string | undefined} onCommit={commit} label={label} />
                         )}
+                        {std && std.tone !== 'good' && (
+                          <span className={`std-flag tone-${std.tone}`} title={std.text}>
+                            <ShieldCheck size={11} aria-hidden /> {std.tone === 'bad' ? 'Abweichung vom Standard' : 'in Toleranz'}
+                          </span>
+                        )}
                       </td>
                     );
                   })}
                 </tr>
               );
             })}
+            <tr>
+              <th className="offer-label">
+                Standardkonformität <small>{project.standardName ?? 'letzte Standardprüfung'}</small>
+              </th>
+              {docs.map((d) => {
+                const c = d.lastCheck;
+                const tone = c?.compliance == null ? '' : c.compliance >= 85 ? 'tone-good' : c.compliance >= 60 ? 'tone-warn' : 'tone-bad';
+                return (
+                  <td key={d.id}>
+                    {c ? (
+                      <Link to={`/documents/${d.id}?tab=standards`} className="std-cell">
+                        <strong className={`compliance-cell ${tone}`}>{c.compliance == null ? '–' : `${formatNumber(c.compliance, 0)} %`}</strong>
+                        <span className="small muted">
+                          {c.openDeviations} offene Abweichung{c.openDeviations === 1 ? '' : 'en'}
+                          {project.standardId && c.standardId !== project.standardId ? ` · ${c.standardName}` : ''}
+                        </span>
+                      </Link>
+                    ) : (
+                      <Link to={`/documents/${d.id}?tab=standards`} className="small">
+                        noch nicht geprüft
+                      </Link>
+                    )}
+                  </td>
+                );
+              })}
+            </tr>
             <tr>
               <th className="offer-label">
                 Anforderungsprüfung <small>Erfüllungsgrad</small>

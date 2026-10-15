@@ -26,8 +26,12 @@ export const TERM_FIELDS: TermField[] = [
   { key: 'validUntil', label: 'Angebot gültig bis', type: 'date' },
   { key: 'paymentText', label: 'Zahlungsbedingungen', type: 'text' },
   { key: 'deliveryText', label: 'Liefertermin (Wortlaut)', type: 'text' },
+  { key: 'penaltyCapPct', label: 'Vertragsstrafe max.', type: 'number', unit: '%', hint: 'Obergrenze in % des Auftragswerts' },
   { key: 'penalty', label: 'Vertragsstrafe', type: 'text' },
+  { key: 'liabilityCapPct', label: 'Haftungsobergrenze', type: 'number', unit: '%', hint: 'in % des Auftragswerts' },
   { key: 'liability', label: 'Haftung', type: 'text' },
+  { key: 'jurisdiction', label: 'Gerichtsstand', type: 'text' },
+  { key: 'governingLaw', label: 'Anwendbares Recht', type: 'text' },
   { key: 'notes', label: 'Bemerkungen', type: 'text' },
 ];
 
@@ -116,8 +120,31 @@ export function detectTerms(content: string): OfferTerms {
 
   const penalty = firstSentence(all, /vertragsstrafe|pönale|penalt/i);
   if (penalty) terms.penalty = penalty;
+  for (const sentence of all.filter((x) => /vertragsstrafe|pönale|penalt/i.test(x))) {
+    const cap = /(?:maximal|höchstens|insgesamt|begrenzt auf|bis zu|max\.)\s*(\d{1,3}(?:,\d{1,2})?)\s*%/i.exec(sentence);
+    if (cap) {
+      terms.penaltyCapPct = num(cap[1]);
+      break;
+    }
+  }
   const liability = firstSentence(all, /haftung|haftet/i);
   if (liability) terms.liability = liability;
+  for (const sentence of all.filter((x) => /haftung|haftet/i.test(x))) {
+    const cap = /begrenzt auf\D{0,10}(\d{1,3})\s*%/i.exec(sentence);
+    if (cap) {
+      terms.liabilityCapPct = Number(cap[1]);
+      break;
+    }
+    if (/auf (?:den|die) (?:Auftragswert|Auftragssumme|Vertragswert|Nettoauftragswert)\b[^.]{0,20}begrenzt|begrenzt auf (?:den|die) (?:Auftragswert|Auftragssumme|Vertragswert)/i.test(sentence)) {
+      terms.liabilityCapPct = 100;
+      break;
+    }
+  }
+  const court = /Gerichtsstand(?:\s+(?:ist|für alle Streitigkeiten ist))?\s*:?\s+([A-ZÄÖÜ][\wäöüß-]+(?:\s+(?:im|am|an der|in)\s+[A-ZÄÖÜ][\wäöüß-]+)?)/.exec(text);
+  if (court && !/^(?:der|die|das|Sitz)$/i.test(court[1])) terms.jurisdiction = court[1];
+  const law = /(?:es gilt|gilt|Anwendung findet|unterliegt)\s+(?:ausschließlich\s+)?(?:das\s+)?(deutsche|österreichische|schweizerische|englische|französische)s?\s+Recht/i.exec(text);
+  if (law) terms.governingLaw = `${law[1].toLowerCase()}s Recht`;
+  else if (/Recht der Bundesrepublik Deutschland/i.test(text)) terms.governingLaw = 'deutsches Recht';
   return terms;
 }
 

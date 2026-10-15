@@ -14,6 +14,9 @@ Webanwendung im Erscheinungsbild der MACK Rides CI zur Prüfung von **Verträgen
 - **Ergebnis & Empfehlung**: Siegerpodest, Stärken/Schwächen, Punkteverteilung je Kriterium, Vergabeempfehlung mit Begründungsvorschlag
   und druckfertiger Vergabevorschlag
 - **Textvergleich**, z. B. Angebot ↔ Auftragsbestätigung, mit wortgenauer Markierung der Abweichungen
+- **Prüfung gegen eigene Standards**: eigene Mindestpositionen als Parameter (z. B. Zahlungsziel ≤ 30 Tage, toleriert bis 45 Tage)
+  und eigene AGB, Musterangebote oder Musterverträge als Referenzdokumente hinterlegen; jedes Dokument wird dagegen geprüft und
+  jede Abweichung im **Abweichungsregister** mit Status, Zuständigkeit, Termin und Kommentar über alle Vertragsversionen nachverfolgt
 - CSV-Export (Excel-kompatibel) für Anforderungslisten, Bewertungsmatrix und Aufgaben
 
 Die Oberfläche ist deutschsprachig, funktioniert im Hell- und Dunkelmodus und auf Mobilgeräten.
@@ -82,6 +85,32 @@ npm start          # http://localhost:3001 – liefert Oberfläche und API aus
      andere = 10 × günstigster Preis / eigener Preis), manuelle Kriterien mit 0–10 Punkten bewerten.
    - *Ergebnis & Empfehlung*: Siegerpodest, Punkteverteilung, Kriterienvergleich; Vergabeempfehlung speichern und als Vergabevorschlag drucken.
    - Standardmäßig werden nur Dokumente vom Typ *Angebot* verglichen; „Alle Dokumente“ bezieht z. B. Auftragsbestätigungen mit ein.
+9. **Gegen eigene Standards prüfen** (Menü *Standards*, Reiter *Standardprüfung* im Projekt und im Dokument) – siehe unten.
+
+## Eigene Standards & Abweichungsregister
+
+Ein **Standard** bündelt, was für uns gilt – z. B. ein *Verkaufsstandard* für Kundenverträge (wir als Lieferant) und ein
+*Einkaufsstandard* für Lieferantenangebote. Beim Anlegen lassen sich Vorlagen und eine Beispiel-AGB übernehmen; alle Werte sind
+Beispiele und an die eigenen Vorgaben anzupassen.
+
+- **Parameter & Regeln:** *Höchstwert* bzw. *Mindestwert* für Lieferzeit, Zahlungsziel, Anzahlung, Skonto, Gewährleistung,
+  Vertragsstrafe (Obergrenze in %) und Haftungsobergrenze, *erlaubte Werte* für Incoterms, Gerichtsstand, anwendbares Recht und
+  Preisbindung sowie *Textbausteine*, die enthalten sein müssen (z. B. „Eigentumsvorbehalt“) oder nicht vorkommen dürfen
+  (z. B. „unbeschränkt“). Jede Regel hat eine Schwere (K.O., wichtig, Hinweis), optional eine **Toleranz** (Rückfallposition:
+  innerhalb gilt der Wert als „toleriert“) und unsere Argumentation, die bei einer Abweichung als Verhandlungsleitfaden erscheint.
+- **Referenzdokumente:** eigene AGB, Musterangebote oder Musterverträge (Datei oder eingefügter Text). Bei der Prüfung wird jede
+  Klausel des Referenzdokuments im geprüften Dokument gesucht: *übereinstimmend*, *abweichend formuliert* (mit wortgenauer
+  Gegenüberstellung) oder *fehlt*. Zusätzlich werden riskante Regelungen gemeldet, die im Standard nicht vorkommen.
+- **Prüfung:** Im Dokument unter *Standardprüfung* den Standard wählen (vorausgewählt ist der Projekt-Standard) und prüfen.
+  Werte kommen aus den gepflegten Konditionen, fehlende werden aus dem Text erkannt. Ergebnis: Standardkonformität in Prozent
+  (konform/übereinstimmend = 1, toleriert/abweichend formuliert = ½, Abweichung/fehlt/nicht geregelt = 0), Verlauf über alle
+  Prüfläufe, Fundstelle mit Sprung in den Dokumenttext und CSV-Export. Im Projekt prüft *Alle Dokumente prüfen* alle Dokumente
+  auf einmal; im Angebotsvergleich werden Konditionen außerhalb des Projekt-Standards markiert.
+- **Abweichungsregister:** Jede Abweichung erhält einen Status (*offen*, *nachverhandeln*, *akzeptiert*, *abgelehnt*, *behoben*),
+  eine zuständige Person, einen Termin und einen Kommentar. Bei jeder erneuten Prüfung (z. B. nach einer neuen Vertragsversion)
+  wird das Register abgeglichen: nicht mehr auftretende Abweichungen werden automatisch *behoben*, behobene, die wieder auftreten,
+  und bereits entschiedene, deren Ist-Wert sich geändert hat, werden wieder *offen*. Zugewiesene Abweichungen erscheinen unter
+  *Meine Aufgaben*, offene in der Übersicht.
 
 ## Bewertungslogik
 
@@ -126,7 +155,7 @@ npm run dev:html   # HTML-Version mit Hot Reload entwickeln
 ```
 
 ```
-shared/   Domänentypen, Anforderungsextraktion, Bewertungslogik, Textvergleich (Server + Browser)
+shared/   Domänentypen, Anforderungsextraktion, Bewertungslogik, Textvergleich, Standardprüfung (Server + Browser)
 server/   API-Routen (routes.ts, gemeinsam für Server und HTML-Version), Express-Anbindung, SQLite-Schema
           und Datenzugriff, Text-Extraktion aus PDF/DOCX, Beispieldaten
 src/      React-Oberfläche (Vite); src/local/ = Browser-Backend der HTML-Version (sql.js + IndexedDB)

@@ -1,4 +1,5 @@
 import { DEFAULT_CRITERIA } from '../shared/scoring';
+import type { LastCheckInfo, StandardRule } from '../shared/standards';
 import {
   emptyStats,
   worstRating,
@@ -28,8 +29,8 @@ import {
 } from '../shared/types';
 import { nowIso, transaction, type DB, type SQLValue } from './db';
 
-type Row = Record<string, any>;
-type Params = SQLValue[];
+export type Row = Record<string, any>;
+export type Params = SQLValue[];
 
 export class HttpError extends Error {
   constructor(
@@ -40,17 +41,17 @@ export class HttpError extends Error {
   }
 }
 
-const all = (db: DB, sql: string, ...params: Params) => db.prepare(sql).all(...params) as Row[];
-const get = (db: DB, sql: string, ...params: Params) => db.prepare(sql).get(...params) as Row | undefined;
-const run = (db: DB, sql: string, ...params: Params) => db.prepare(sql).run(...params);
-const insertId = (db: DB, sql: string, ...params: Params) => Number(run(db, sql, ...params).lastInsertRowid);
+export const all = (db: DB, sql: string, ...params: Params) => db.prepare(sql).all(...params) as Row[];
+export const get = (db: DB, sql: string, ...params: Params) => db.prepare(sql).get(...params) as Row | undefined;
+export const run = (db: DB, sql: string, ...params: Params) => db.prepare(sql).run(...params);
+export const insertId = (db: DB, sql: string, ...params: Params) => Number(run(db, sql, ...params).lastInsertRowid);
 
 function notFound(what: string): never {
   throw new HttpError(404, `${what} nicht gefunden`);
 }
 
 /** Baut ein UPDATE aus einem Patch-Objekt; nur erlaubte Felder werden übernommen. */
-function updateFields(db: DB, table: string, id: number, patch: Record<string, SQLValue | undefined>, touch = true) {
+export function updateFields(db: DB, table: string, id: number, patch: Record<string, SQLValue | undefined>, touch = true) {
   const entries = Object.entries(patch).filter(([, v]) => v !== undefined) as Array<[string, SQLValue]>;
   if (touch) entries.push(['updated_at', nowIso()]);
   if (entries.length === 0) return;
@@ -74,6 +75,7 @@ const mapProject = (r: Row): Project => ({
   description: r.description,
   recommendation: r.recommendation ?? '',
   recommendedDocumentId: r.recommended_document_id ?? null,
+  standardId: r.standard_id ?? null,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
 });
@@ -106,7 +108,56 @@ const mapEntry = (r: Row): PriceEntry => ({
   note: r.note,
 });
 
-const mapDocumentMeta = (r: Row, stats: ReqStats): DocumentMeta => ({
+export const mapRule = (r: Row): StandardRule => ({
+  id: r.id,
+  standardId: r.standard_id,
+  position: r.position,
+  title: r.title,
+  category: r.category,
+  kind: r.kind,
+  metric: r.metric,
+  target: r.target,
+  tolerance: r.tolerance,
+  severity: r.severity,
+  guidance: r.guidance,
+  active: Boolean(r.active),
+});
+
+export function listRules(db: DB, standardId: number): StandardRule[] {
+  return all(db, 'SELECT * FROM standard_rules WHERE standard_id = ? ORDER BY position, id', standardId).map(mapRule);
+}
+
+/** Letzte Standardprüfung je Dokument inkl. offener Abweichungen. */
+function lastChecks(db: DB, whereSql: string, ...params: Params): Map<number, LastCheckInfo> {
+  const rows = all(
+    db,
+    `SELECT c.document_id, c.standard_id, c.checked_at, c.summary, s.name AS standard_name,
+       (SELECT COUNT(*) FROM deviations v WHERE v.document_id = c.document_id AND v.standard_id = c.standard_id
+          AND v.status IN ('open', 'negotiate')) AS open_deviations
+     FROM standard_checks c JOIN standards s ON s.id = c.standard_id JOIN documents d ON d.id = c.document_id
+     WHERE ${whereSql} AND c.id = (SELECT MAX(c2.id) FROM standard_checks c2 WHERE c2.document_id = c.document_id)`,
+    ...params,
+  );
+  const map = new Map<number, LastCheckInfo>();
+  for (const r of rows) {
+    let compliance: number | null = null;
+    try {
+      compliance = JSON.parse(r.summary).compliance ?? null;
+    } catch {
+      /* ignorieren */
+    }
+    map.set(r.document_id, {
+      standardId: r.standard_id,
+      standardName: r.standard_name,
+      checkedAt: r.checked_at,
+      compliance,
+      openDeviations: r.open_deviations,
+    });
+  }
+  return map;
+}
+
+const mapDocumentMeta = (r: Row, stats: ReqStats, lastCheck: LastCheckInfo | null = null): DocumentMeta => ({
   id: r.id,
   projectId: r.project_id,
   title: r.title,
@@ -120,6 +171,7 @@ const mapDocumentMeta = (r: Row, stats: ReqStats): DocumentMeta => ({
   fileMime: r.file_mime,
   hasFile: Boolean(r.file_path),
   terms: parseTerms(r.terms),
+  lastCheck,
   contentLength: r.content_length ?? 0,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
@@ -279,8 +331,11 @@ function getProjectRow(db: DB, id: number): Row {
 
 export function getProject(db: DB, id: number): ProjectDetail {
   const project = mapProject(getProjectRow(db, id));
+  const standard = project.standardId ? get(db, 'SELECT name FROM standards WHERE id = ?', project.standardId) : undefined;
   return {
     ...project,
+    standardName: standard?.name ?? null,
+    standardRules: project.standardId ? listRules(db, project.standardId) : [],
     documents: listDocuments(db, id),
     criteria: all(db, 'SELECT * FROM criteria WHERE project_id = ? ORDER BY position, id', id).map(mapCriterion),
     scores: all(
@@ -331,9 +386,12 @@ export function createProject(db: DB, input: { name: string; description: string
 export function updateProject(
   db: DB,
   id: number,
-  patch: Partial<{ name: string; description: string; recommendation: string; recommendedDocumentId: number | null }>,
+  patch: Partial<{ name: string; description: string; recommendation: string; recommendedDocumentId: number | null; standardId: number | null }>,
 ): ProjectDetail {
   getProjectRow(db, id);
+  if (patch.standardId !== undefined && patch.standardId !== null && !get(db, 'SELECT id FROM standards WHERE id = ?', patch.standardId)) {
+    notFound('Standard');
+  }
   if (patch.recommendedDocumentId !== undefined && patch.recommendedDocumentId !== null) {
     const doc = getDocumentRow(db, patch.recommendedDocumentId);
     if (doc.project_id !== id) throw new HttpError(400, 'Das empfohlene Dokument gehört nicht zu diesem Projekt');
@@ -343,6 +401,7 @@ export function updateProject(
     description: patch.description,
     recommendation: patch.recommendation,
     recommended_document_id: patch.recommendedDocumentId,
+    standard_id: patch.standardId,
   });
   return getProject(db, id);
 }
@@ -360,7 +419,7 @@ function touchProject(db: DB, projectId: number): void {
   run(db, 'UPDATE projects SET updated_at = ? WHERE id = ?', nowIso(), projectId);
 }
 
-function touchProjectOfDocument(db: DB, documentId: number): void {
+export function touchProjectOfDocument(db: DB, documentId: number): void {
   run(db, 'UPDATE projects SET updated_at = ? WHERE id = (SELECT project_id FROM documents WHERE id = ?)', nowIso(), documentId);
 }
 
@@ -372,12 +431,13 @@ const DOC_META_COLUMNS = `d.id, d.project_id, d.title, d.doc_type, d.counterpart
 export function listDocuments(db: DB, projectId: number): DocumentMeta[] {
   const rows = all(db, `SELECT ${DOC_META_COLUMNS} FROM documents d WHERE d.project_id = ? ORDER BY d.created_at, d.id`, projectId);
   const stats = statsBy(db, 'r.document_id', 'JOIN documents d ON d.id = r.document_id', 'd.project_id = ?', projectId);
-  return rows.map((r) => mapDocumentMeta(r, stats.get(r.id) ?? emptyStats()));
+  const checks = lastChecks(db, 'd.project_id = ?', projectId);
+  return rows.map((r) => mapDocumentMeta(r, stats.get(r.id) ?? emptyStats(), checks.get(r.id) ?? null));
 }
 
-function getDocumentRow(db: DB, id: number): Row {
+export function getDocumentRow(db: DB, id: number): Row {
   return (
-    get(db, `SELECT ${DOC_META_COLUMNS}, d.content, p.name AS project_name FROM documents d JOIN projects p ON p.id = d.project_id WHERE d.id = ?`, id) ??
+    get(db, `SELECT ${DOC_META_COLUMNS}, d.content, p.name AS project_name, p.standard_id AS project_standard_id FROM documents d JOIN projects p ON p.id = d.project_id WHERE d.id = ?`, id) ??
     notFound('Dokument')
   );
 }
@@ -385,7 +445,8 @@ function getDocumentRow(db: DB, id: number): Row {
 export function getDocument(db: DB, id: number): DocumentFull {
   const row = getDocumentRow(db, id);
   const stats = statsBy(db, 'r.document_id', '', 'r.document_id = ?', id).get(id) ?? emptyStats();
-  return { ...mapDocumentMeta(row, stats), content: row.content, projectName: row.project_name };
+  const check = lastChecks(db, 'd.id = ?', id).get(id) ?? null;
+  return { ...mapDocumentMeta(row, stats, check), content: row.content, projectName: row.project_name, projectStandardId: row.project_standard_id ?? null };
 }
 
 export function getDocumentFile(db: DB, id: number): { path: string; name: string; mime: string } {
@@ -942,6 +1003,7 @@ export function getDashboard(db: DB, userId: number | null, today: string): Dash
       openRequirements: count(`SELECT COUNT(*) AS c FROM requirements WHERE status = 'open'`),
       openTasks: count(`SELECT COUNT(*) AS c FROM tasks WHERE state = 'open'`),
       overdueTasks: count(`SELECT COUNT(*) AS c FROM tasks WHERE state = 'open' AND due_date IS NOT NULL AND due_date < ?`, today),
+      openDeviations: count(`SELECT COUNT(*) AS c FROM deviations WHERE status IN ('open', 'negotiate')`),
     },
     myTasks: userId === null ? [] : listTasksWhere(db, `t.assignee_id = ? AND t.state = 'open'`, userId).slice(0, 8),
     recentProjects: projectSummaries(db).slice(0, 6),

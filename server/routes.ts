@@ -15,6 +15,16 @@ import {
 } from '../shared/types';
 import type { DB } from './db';
 import { seedDemo } from './demo';
+import {
+  DEVIATION_STATUSES,
+  parseNumber,
+  REFERENCE_KINDS,
+  RULE_KINDS,
+  RULE_METRICS,
+  SEVERITIES,
+  STANDARD_SCOPES,
+} from '../shared/standards';
+import * as standards from './standardsStore';
 import * as store from './store';
 import { HttpError } from './store';
 import { extractTextFromFile } from './textExtract';
@@ -97,6 +107,10 @@ function parseTermsInput(raw: unknown): OfferTerms | undefined {
     downPaymentPct: numberField('downPaymentPct', 100),
     discountPct: numberField('discountPct', 100),
     warrantyMonths: numberField('warrantyMonths', 600),
+    penaltyCapPct: numberField('penaltyCapPct', 1000),
+    liabilityCapPct: numberField('liabilityCapPct', 100000),
+    jurisdiction: optionalString(body, 'jurisdiction', 200),
+    governingLaw: optionalString(body, 'governingLaw', 200),
     validUntil: optionalDate(body, 'validUntil'),
     priceBinding: body.priceBinding === null ? '' : optionalEnum(body, 'priceBinding', PRICE_BINDINGS),
     incoterms: optionalString(body, 'incoterms', 50),
@@ -108,6 +122,35 @@ function parseTermsInput(raw: unknown): OfferTerms | undefined {
   };
   for (const key of Object.keys(terms)) if (terms[key] === undefined) delete terms[key];
   return terms as OfferTerms;
+}
+
+function parseRuleInput(raw: unknown, partial = false): Partial<standards.RuleInput> {
+  const body = asBody(raw);
+  const kind = optionalEnum(body, 'kind', RULE_KINDS);
+  const metric = optionalString(body, 'metric', 50);
+  const target = optionalString(body, 'target', 2000);
+  const tolerance = optionalString(body, 'tolerance', 100);
+  if (!partial) {
+    if (!kind) throw new HttpError(400, 'Art der Regel ist erforderlich');
+    if (!target) throw new HttpError(400, 'Sollwert ist erforderlich');
+  }
+  if (kind && (kind === 'max' || kind === 'min' || kind === 'equals')) {
+    if (metric !== undefined && !RULE_METRICS.some((m) => m.key === metric)) throw new HttpError(400, 'Unbekannter Parameter');
+    if (!partial && !metric) throw new HttpError(400, 'Parameter ist erforderlich');
+  }
+  if ((kind === 'max' || kind === 'min') && target && parseNumber(target) === null) throw new HttpError(400, 'Sollwert muss eine Zahl sein');
+  if ((kind === 'max' || kind === 'min') && tolerance && parseNumber(tolerance) === null) throw new HttpError(400, 'Toleranz muss eine Zahl sein');
+  return {
+    title: partial && body.title === undefined ? undefined : requiredString(body, 'title', 'Bezeichnung', 200),
+    category: optionalString(body, 'category', 100) ?? (partial ? undefined : 'Allgemein'),
+    kind,
+    metric: kind === 'contains' || kind === 'not_contains' ? '' : (metric ?? (partial ? undefined : '')),
+    target,
+    tolerance: kind === 'max' || kind === 'min' ? (tolerance ?? (partial ? undefined : '')) : kind ? '' : tolerance,
+    severity: optionalEnum(body, 'severity', SEVERITIES) ?? (partial ? undefined : 'major'),
+    guidance: optionalString(body, 'guidance', 5000) ?? (partial ? undefined : ''),
+    active: optionalBoolean(body, 'active') ?? (partial ? undefined : true),
+  };
 }
 
 function parsePositionInput(raw: unknown) {
@@ -203,6 +246,7 @@ export function createRoutes(db: DB, files: FileStore, newFileKey: (extension: s
             recommendation: optionalString(body, 'recommendation', 10000),
             recommendedDocumentId:
               body.recommendedDocumentId === undefined ? undefined : body.recommendedDocumentId === null ? null : idParam(body.recommendedDocumentId, 'Dokument-ID'),
+            standardId: body.standardId === undefined ? undefined : body.standardId === null ? null : idParam(body.standardId, 'Standard-ID'),
           }),
         );
       },
@@ -361,6 +405,183 @@ export function createRoutes(db: DB, files: FileStore, newFileKey: (extension: s
             state: optionalEnum(body, 'state', PRICE_STATES) ?? 'priced',
             note: optionalString(body, 'note', 1000) ?? '',
           }),
+        );
+      },
+    },
+
+    // ---------------------------------------------------------- Eigene Standards
+    { method: 'GET', path: '/standards', handle: () => ok(standards.listStandards(db)) },
+    {
+      method: 'POST',
+      path: '/standards',
+      handle: ({ body: raw }) => {
+        const body = asBody(raw);
+        const template = body.template === 'sales' || body.template === 'purchase' ? body.template : null;
+        return ok(
+          standards.createStandard(db, {
+            name: requiredString(body, 'name', 'Name', 200),
+            description: optionalString(body, 'description', 2000) ?? '',
+            scope: optionalEnum(body, 'scope', STANDARD_SCOPES) ?? 'general',
+            template,
+            exampleDocument: optionalBoolean(body, 'exampleDocument') ?? false,
+          }),
+          201,
+        );
+      },
+    },
+    { method: 'GET', path: '/standards/:id', handle: ({ params }) => ok(standards.getStandard(db, idParam(params.id))) },
+    {
+      method: 'PATCH',
+      path: '/standards/:id',
+      handle: ({ params, body: raw }) => {
+        const body = asBody(raw);
+        return ok(
+          standards.updateStandard(db, idParam(params.id), {
+            name: body.name === undefined ? undefined : requiredString(body, 'name', 'Name', 200),
+            description: optionalString(body, 'description', 2000),
+            scope: optionalEnum(body, 'scope', STANDARD_SCOPES),
+          }),
+        );
+      },
+    },
+    {
+      method: 'DELETE',
+      path: '/standards/:id',
+      handle: async ({ params }) => {
+        const keys = standards.deleteStandard(db, idParam(params.id));
+        await Promise.all(keys.map(removeFile));
+        return noContent;
+      },
+    },
+    {
+      method: 'POST',
+      path: '/standards/:id/rules',
+      handle: ({ params, body: raw }) => {
+        const body = asBody(raw);
+        const items = (Array.isArray(body.items) ? body.items : [body]).map((r) => parseRuleInput(r) as standards.RuleInput);
+        return ok(standards.createRules(db, idParam(params.id), items), 201);
+      },
+    },
+    { method: 'PATCH', path: '/rules/:id', handle: ({ params, body }) => ok(standards.updateRule(db, idParam(params.id), parseRuleInput(body, true))) },
+    {
+      method: 'DELETE',
+      path: '/rules/:id',
+      handle: ({ params }) => {
+        standards.deleteRule(db, idParam(params.id));
+        return noContent;
+      },
+    },
+    {
+      method: 'POST',
+      path: '/standards/:id/documents',
+      upload: true,
+      handle: async ({ params, body: raw, file }) => {
+        const standardId = idParam(params.id);
+        const body = asBody(raw);
+        let content = optionalString(body, 'content', MAX_CONTENT_CHARS) ?? '';
+        let fileKey: string | null = null;
+        if (file) {
+          if (file.data.byteLength > MAX_UPLOAD_BYTES) throw new HttpError(400, `Datei ist zu groß (max. ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)`);
+          const extracted = await extractTextFromFile(file.data, file.name);
+          if (!content) content = extracted.text;
+          fileKey = newFileKey(extensionOf(file.name));
+          await files.save(fileKey, file.data, file.mime);
+        }
+        content = normalizeContent(content);
+        if (!content) {
+          await removeFile(fileKey);
+          throw new HttpError(400, 'Bitte eine Datei hochladen oder Text einfügen');
+        }
+        const title = optionalString(body, 'title', 300) || (file ? file.name.replace(/\.[^.]+$/, '') : '');
+        try {
+          if (!title) throw new HttpError(400, 'Titel ist erforderlich');
+          return ok(
+            standards.createStandardDocument(db, standardId, {
+              title,
+              kind: optionalEnum(body, 'kind', REFERENCE_KINDS) ?? 'agb',
+              content,
+              fileName: file?.name ?? null,
+              filePath: fileKey,
+              fileMime: file?.mime ?? null,
+            }),
+            201,
+          );
+        } catch (err) {
+          await removeFile(fileKey);
+          throw err;
+        }
+      },
+    },
+    { method: 'GET', path: '/standard-documents/:id', handle: ({ params }) => ok(standards.getStandardDocument(db, idParam(params.id))) },
+    {
+      method: 'PATCH',
+      path: '/standard-documents/:id',
+      handle: ({ params, body: raw }) => {
+        const body = asBody(raw);
+        const content = optionalString(body, 'content', MAX_CONTENT_CHARS);
+        return ok(
+          standards.updateStandardDocument(db, idParam(params.id), {
+            title: body.title === undefined ? undefined : requiredString(body, 'title', 'Titel', 300),
+            kind: optionalEnum(body, 'kind', REFERENCE_KINDS),
+            content: content === undefined ? undefined : normalizeContent(content),
+          }),
+        );
+      },
+    },
+    {
+      method: 'DELETE',
+      path: '/standard-documents/:id',
+      handle: async ({ params }) => {
+        await removeFile(standards.deleteStandardDocument(db, idParam(params.id)));
+        return noContent;
+      },
+    },
+
+    // ---------------------------------------------------------- Standardprüfung & Abweichungen
+    { method: 'GET', path: '/documents/:id/checks', handle: ({ params }) => ok(standards.listChecks(db, idParam(params.id))) },
+    {
+      method: 'GET',
+      path: '/documents/:id/checks/history',
+      handle: ({ params, query }) => ok(standards.checkHistory(db, idParam(params.id), idParam(query.standardId, 'Standard-ID'))),
+    },
+    {
+      method: 'POST',
+      path: '/documents/:id/checks',
+      handle: ({ params, body, actorId }) =>
+        ok(standards.runDocumentCheck(db, idParam(params.id), idParam(asBody(body).standardId, 'Standard-ID'), actorId), 201),
+    },
+    {
+      method: 'GET',
+      path: '/deviations',
+      handle: ({ query: q }) =>
+        ok(
+          standards.listDeviations(db, {
+            documentId: q.documentId ? idParam(q.documentId) : undefined,
+            standardId: q.standardId ? idParam(q.standardId) : undefined,
+            projectId: q.projectId ? idParam(q.projectId) : undefined,
+            assigneeId: q.assigneeId ? idParam(q.assigneeId) : undefined,
+            status: optionalEnum(asBody({ status: q.status || undefined }), 'status', DEVIATION_STATUSES),
+            open: q.open === '1' || q.open === 'true',
+          }),
+        ),
+    },
+    {
+      method: 'PATCH',
+      path: '/deviations/:id',
+      handle: ({ params, body: raw, actorId }) => {
+        const body = asBody(raw);
+        return ok(
+          standards.updateDeviation(
+            db,
+            idParam(params.id),
+            {
+              status: optionalEnum(body, 'status', DEVIATION_STATUSES),
+              comment: optionalString(body, 'comment', 5000),
+              assigneeId: body.assigneeId === undefined ? undefined : body.assigneeId === null || body.assigneeId === '' ? null : idParam(body.assigneeId, 'Person'),
+              dueDate: optionalDate(body, 'dueDate'),
+            },
+            actorId,
+          ),
         );
       },
     },

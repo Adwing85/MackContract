@@ -1,4 +1,4 @@
-import { ClipboardList, FolderKanban, LayoutDashboard, ListTodo, Scale, Users } from 'lucide-react';
+import { ClipboardList, FolderKanban, LayoutDashboard, ListTodo, Scale, ShieldCheck, Users } from 'lucide-react';
 import { NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { useEffect } from 'react';
 import { LocalDataPanel } from './components/LocalData';
@@ -11,6 +11,8 @@ import { MyTasksPage } from './pages/MyTasks';
 import { PeoplePage } from './pages/People';
 import { ProjectPage } from './pages/Project';
 import { ProjectsPage } from './pages/Projects';
+import { StandardPage } from './pages/Standard';
+import { StandardsPage } from './pages/Standards';
 import { TasksPage } from './pages/Tasks';
 import { useUsers } from './state';
 
@@ -18,6 +20,7 @@ const NAV = [
   { to: '/', label: 'Übersicht', icon: LayoutDashboard, end: true },
   { to: '/projects', label: 'Projekte', icon: FolderKanban },
   { to: '/comparisons', label: 'Angebotsvergleich', icon: Scale },
+  { to: '/standards', label: 'Standards', icon: ShieldCheck },
   { to: '/my-tasks', label: 'Meine Aufgaben', icon: ListTodo },
   { to: '/tasks', label: 'Aufgabenverteilung', icon: ClipboardList },
   { to: '/people', label: 'Personen', icon: Users },
@@ -79,6 +82,8 @@ export function App() {
           <Route path="/projects/:id" element={<ProjectPage />} />
           <Route path="/comparisons" element={<ComparisonsPage />} />
           <Route path="/documents/:id" element={<DocumentPage />} />
+          <Route path="/standards" element={<StandardsPage />} />
+          <Route path="/standards/:id" element={<StandardPage />} />
           <Route path="/my-tasks" element={<MyTasksPage />} />
           <Route path="/tasks" element={<TasksPage />} />
           <Route path="/people" element={<PeoplePage />} />

@@ -5,6 +5,7 @@ import initSqlJs, { type SqlJsStatic } from 'sql.js';
 import wasmUrl from 'sql.js/dist/sql-wasm-browser.wasm?url';
 import { initDb } from '../../server/db';
 import { createRoutes, type FileStore, type Route } from '../../server/routes';
+import * as standardsStore from '../../server/standardsStore';
 import * as store from '../../server/store';
 import { HttpError } from '../../server/store';
 import { ApiError } from '../apiError';
@@ -187,6 +188,27 @@ export function openLocalFile(documentId: number): Promise<void> {
       const url = URL.createObjectURL(blob);
       const win = window.open(url, '_blank');
       if (!win) downloadBlob(blob, info.name);
+      setTimeout(() => URL.revokeObjectURL(url), 120_000);
+    } else downloadBlob(blob, info.name);
+  });
+}
+
+export function openLocalStandardFile(standardDocumentId: number): Promise<void> {
+  return enqueue(async () => {
+    const { db } = await getBackend();
+    let info: { path: string; name: string };
+    try {
+      info = standardsStore.getStandardDocumentFile(db, standardDocumentId);
+    } catch (err) {
+      throw err instanceof HttpError ? new ApiError(err.status, err.message) : err;
+    }
+    const file = await readFile(info.path);
+    if (!file) throw new ApiError(404, 'Die Originaldatei ist in diesem Browser nicht vorhanden');
+    const isPdf = /\.pdf$/i.test(info.name);
+    const blob = new Blob([file.data as BlobPart], { type: isPdf ? 'application/pdf' : 'application/octet-stream' });
+    if (isPdf) {
+      const url = URL.createObjectURL(blob);
+      if (!window.open(url, '_blank')) downloadBlob(blob, info.name);
       setTimeout(() => URL.revokeObjectURL(url), 120_000);
     } else downloadBlob(blob, info.name);
   });

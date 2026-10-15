@@ -1,4 +1,4 @@
-import { ArrowLeft, FileText, GitCompareArrows, Pencil, Scale, SlidersHorizontal, Trash2, Trophy } from 'lucide-react';
+import { ArrowLeft, FileText, GitCompareArrows, Pencil, Scale, ShieldCheck, SlidersHorizontal, Trash2, Trophy } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { api } from '../api';
@@ -11,6 +11,7 @@ import { DiffTab } from './project/DiffTab';
 import { DocumentsTab } from './project/DocumentsTab';
 import { OffersTab } from './project/OffersTab';
 import { ScoringTab } from './project/ScoringTab';
+import { StandardsTab } from './project/StandardsTab';
 import type { ProjectDetail } from '../../shared/types';
 
 export function ProjectPage() {
@@ -45,6 +46,9 @@ export function ProjectPage() {
         <div>
           <h1>{project.name}</h1>
           {project.description && <p className="page-sub">{project.description}</p>}
+          <Link to="?tab=standards" className={`standard-link ${project.standardId ? '' : 'none'}`}>
+            <ShieldCheck size={14} aria-hidden /> {project.standardName ? `Standard: ${project.standardName}` : 'Kein Standard zugeordnet'}
+          </Link>
         </div>
         <div className="page-actions">
           <button className="btn" onClick={() => setEditing(true)}>
@@ -77,6 +81,12 @@ export function ProjectPage() {
           { id: 'scoring', label: 'Bewertung', icon: <SlidersHorizontal size={16} />, count: project.criteria.length },
           { id: 'comparison', label: 'Ergebnis & Empfehlung', icon: <Trophy size={16} /> },
           { id: 'diff', label: 'Textvergleich', icon: <GitCompareArrows size={16} /> },
+          {
+            id: 'standards',
+            label: 'Standardprüfung',
+            icon: <ShieldCheck size={16} />,
+            count: project.documents.reduce((n, d) => n + (d.lastCheck?.openDeviations ?? 0), 0) || undefined,
+          },
         ]}
       />
 
@@ -85,6 +95,7 @@ export function ProjectPage() {
       {tab === 'scoring' && <ScoringTab project={project} setProject={setData} reload={reload} />}
       {tab === 'comparison' && <ComparisonTab project={project} setProject={updateProject} />}
       {tab === 'diff' && <DiffTab project={project} />}
+      {tab === 'standards' && <StandardsTab project={project} reload={reload} />}
 
       <EditProjectDialog
         open={editing}
